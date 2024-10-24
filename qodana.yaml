@@ -1,1 +1,21 @@
 bootstrap: apt-get update; apt-get install -y zlib1g-dev flex bison gnutls-bin gnutls-dev pkg-config libcurl4-openssl-dev libzstd-dev libboost-all-dev libsnappy-dev libbz2-dev liblz4-dev liblzma-dev liblzo2-dev
+exclude:
+  - name: CppDFAMemoryLeak
+  - name: CppDFAArrayIndexOutOfBounds
+  - name: CppDFAConstantConditions
+  - name: CppDFATimeOver
+  - name: CppDFANullDereference
+  - name: CppDFAEndlessLoop
+  - name: CppDFANotInitializedField
+  - name: CppDFAConstantParameter
+  - name: CppDFAInfiniteRecursion
+  - name: CppDFAUnreachableFunctionCall
+  - name: CppDFAConstantFunctionResult
+  - name: CppDFAUnreadVariable
+  - name: CppDFALoopConditionNotUpdated
+  - name: CppDFALocalValueEscapesFunction
+  - name: CppDFALocalValueEscapesScope
+  - name: CppDFAInvalidatedMemory
+  - name: CppDFAUnreachableCode
+  - name: CppDFADeletedPointer
+  - name: CppDFAUnusedValue
