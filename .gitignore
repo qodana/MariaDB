@@ -625,3 +625,7 @@ tests/mariadb-client-test
 versioninfo_dll.rc
 versioninfo_exe.rc
 win/packaging/ca/symlinks.cc
+qodana-results
+.env
+qodana
+ide.sarif.json
