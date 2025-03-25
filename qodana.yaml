@@ -3,4 +3,7 @@ bootstrap: |
   apt-get update
   apt-get install -y flex bison gnutls-bin gnutls-dev zlib1g-dev
 profile:
-  name: qodana.recommended
+  name: empty
+  # path: no-cpp.profile.yaml
+# properties:
+#   idea.log.debug.categories: "#com.jetbrains.cidr.radler.inspections.RadInspection"
