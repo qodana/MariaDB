@@ -4,6 +4,275 @@ bootstrap: |
   apt-get install -y flex bison gnutls-bin gnutls-dev zlib1g-dev
 profile:
   name: empty
+include:
+  # - name: ArgumentSelectionDefects
+  # - name: CDeclarationWithImplicitIntType
+  - name: ClangTidy
+  # - name: Clazy
+  # - name: ConstevalIfIsAlwaysConstant
+  # - name: CppAbstractClassWithoutSpecifier
+  # - name: CppAbstractFinalClass
+  # - name: CppAbstractVirtualFunctionCallInCtor
+  # - name: CppAccessSpecifierWithNoDeclarations
+  # - name: CppAwaiterTypeIsNotClass
+  # - name: CppBooleanIncrementExpression
+  # - name: CppBoostFormatBadCode
+  # - name: CppBoostFormatLegacyCode
+  # - name: CppBoostFormatMixedArgs
+  # - name: CppBoostFormatTooFewArgs
+  # - name: CppBoostFormatTooManyArgs
+  # - name: CppCStyleCast
+  # - name: CppCVQualifierCanNotBeAppliedToReference
+  # - name: CppClassCanBeFinal
+  # - name: CppClassIsIncomplete
+  # - name: CppClassNeedsConstructorBecauseOfUninitializedMember
+  # - name: CppClassNeverUsed
+  # - name: CppCompileTimeConstantCanBeReplacedWithBooleanConstant
+  # - name: CppConceptNeverUsed
+  # - name: CppConditionalExpressionCanBeSimplified
+  # - name: CppConstParameterInDeclaration
+  # - name: CppConstValueFunctionReturnType
+  # - name: CppCoroutineCallResolveError
+  # - name: CppDFAArrayIndexOutOfBounds
+  # - name: CppDFAConstantConditions
+  # - name: CppDFAConstantFunctionResult
+  # - name: CppDFAConstantParameter
+  # - name: CppDFADeletedPointer
+  # - name: CppDFAEndlessLoop
+  # - name: CppDFAInfiniteRecursion
+  # - name: CppDFAInvalidatedMemory
+  # - name: CppDFALocalValueEscapesFunction
+  # - name: CppDFALocalValueEscapesScope
+  # - name: CppDFALoopConditionNotUpdated
+  # - name: CppDFAMemoryLeak
+  # - name: CppDFANotInitializedField
+  # - name: CppDFANullDereference
+  # - name: CppDFATimeOver
+  # - name: CppDFAUnreachableCode
+  # - name: CppDFAUnreachableFunctionCall
+  # - name: CppDFAUnreadVariable
+  # - name: CppDFAUnusedValue
+  # - name: CppDeclarationHidesLocal
+  # - name: CppDeclarationHidesUncapturedLocal
+  # - name: CppDeclarationSpecifierWithoutDeclarators
+  # - name: CppDeclaratorDisambiguatedAsFunction
+  # - name: CppDeclaratorNeverUsed
+  # - name: CppDeclaratorUsedBeforeInitialization
+  # - name: CppDefaultCaseNotHandledInSwitchStatement
+  # - name: CppDefaultInitializationWithNoUserConstructor
+  # - name: CppDefaultIsUsedAsIdentifier
+  # - name: CppDefaultedSpecialMemberFunctionIsImplicitlyDeleted
+  # - name: CppDeletingVoidPointer
+  # - name: CppDependentTemplateWithoutTemplateKeyword
+  # - name: CppDependentTypeWithoutTypenameKeyword
+  # - name: CppDeprecatedEntity
+  # - name: CppDeprecatedOverridenMethod
+  # - name: CppDeprecatedRegisterStorageClassSpecifier
+  # - name: CppDereferenceOperatorLimitExceeded
+  # - name: CppDiscardedPostfixOperatorResult
+  # - name: CppDoxygenSyntaxError
+  # - name: CppDoxygenUndocumentedParameter
+  # - name: CppDoxygenUnresolvedReference
+  # - name: CppEmptyDeclaration
+  # - name: CppEnforceCVQualifiersOrder
+  # - name: CppEnforceCVQualifiersPlacement
+  # - name: CppEnforceDoStatementBraces
+  # - name: CppEnforceForStatementBraces
+  # - name: CppEnforceFunctionDeclarationStyle
+  # - name: CppEnforceIfStatementBraces
+  # - name: CppEnforceNestedNamespacesStyle
+  # - name: CppEnforceOverridingDestructorStyle
+  # - name: CppEnforceOverridingFunctionStyle
+  # - name: CppEnforceTypeAliasCodeStyle
+  # - name: CppEnforceWhileStatementBraces
+  # - name: CppEntityAssignedButNoRead
+  # - name: CppEntityUsedOnlyInUnevaluatedContext
+  # - name: CppEnumeratorNeverUsed
+  # - name: CppEqualOperandsInBinaryExpression
+  # - name: CppEvaluationFailure
+  # - name: CppExplicitSpecializationInNonNamespaceScope
+  # - name: CppExpressionWithoutSideEffects
+  # - name: CppFinalFunctionInFinalClass
+  # - name: CppFinalNonOverridingVirtualFunction
+  # - name: CppForLoopCanBeReplacedWithWhile
+  # - name: CppForwardEnumDeclarationWithoutUnderlyingType
+  # - name: CppFunctionDoesntReturnValue
+  # - name: CppFunctionIsNotImplemented
+  # - name: CppFunctionResultShouldBeUsed
+  # - name: CppFunctionalStyleCast
+  # - name: CppHeaderHasBeenAlreadyIncluded
+  # - name: CppHiddenFunction
+  # - name: CppHidingFunction
+  # - name: CppIdenticalOperandsInBinaryExpression
+  # - name: CppIfCanBeReplacedByConstexprIf
+  # - name: CppImplicitDefaultConstructorNotAvailable
+  # - name: CppIncompatiblePointerConversion
+  # - name: CppIncompleteSwitchStatement
+  # - name: CppInconsistentNaming
+  # - name: CppIntegralToPointerConversion
+  # - name: CppInvalidLineContinuation
+  # - name: CppJoinDeclarationAndAssignment
+  # - name: CppLambdaCaptureNeverUsed
+  # - name: CppLocalVariableMayBeConst
+  # - name: CppLocalVariableMightNotBeInitialized
+  # - name: CppLocalVariableWithNonTrivialDtorIsNeverUsed
+  # - name: CppLongFloat
+  # - name: CppMemberFunctionMayBeConst
+  # - name: CppMemberFunctionMayBeStatic
+  # - name: CppMemberInitializersOrder
+  # - name: CppMismatchedClassTags
+  # - name: CppMissingIncludeGuard
+  # - name: CppMissingKeywordThrow
+  # - name: CppMsExtAddressOfClassRValue
+  # - name: CppMsExtBindingRValueToLvalueReference
+  # - name: CppMsExtCopyElisionInCopyInitDeclarator
+  # - name: CppMsExtDoubleUserConversionInCopyInit
+  # - name: CppMsExtNotInitializedStaticConstLocalVar
+  # - name: CppMsExtReinterpretCastFromNullptr
+  # - name: CppMultiCharacterLiteral
+  # - name: CppMultiCharacterWideLiteral
+  # - name: CppMustBePublicVirtualToImplementInterface
+  # - name: CppMutableSpecifierOnReferenceMember
+  # - name: CppNoDiscardExpression
+  # - name: CppNodiscardFunctionWithoutReturnValue
+  # - name: CppNonExceptionSafeResourceAcquisition
+  # - name: CppNonExplicitConversionOperator
+  # - name: CppNonExplicitConvertingConstructor
+  # - name: CppNonInlineFunctionDefinitionInHeaderFile
+  # - name: CppNonInlineVariableDefinitionInHeaderFile
+  # - name: CppNotAllPathsReturnValue
+  # - name: CppObjectMemberMightNotBeInitialized
+  # - name: CppOutParameterMustBeWritten
+  # - name: CppParameterMayBeConst
+  # - name: CppParameterMayBeConstPtrOrRef
+  # - name: CppParameterNamesMismatch
+  # - name: CppParameterNeverUsed
+  # - name: CppPassValueParameterByConstReference
+  # - name: CppPointerConversionDropsQualifiers
+  # - name: CppPointerToIntegralConversion
+  # - name: CppPolymorphicClassWithNonVirtualPublicDestructor
+  # - name: CppPossiblyErroneousEmptyStatements
+  # - name: CppPossiblyUninitializedMember
+  # - name: CppPossiblyUnintendedObjectSlicing
+  # - name: CppPrecompiledHeaderIsNotIncluded
+  # - name: CppPrecompiledHeaderNotFound
+  # - name: CppPrintfBadFormat
+  # - name: CppPrintfExtraArg
+  # - name: CppPrintfMissedArg
+  # - name: CppPrintfRiskyFormat
+  # - name: CppPrivateSpecialMemberFunctionIsNotImplemented
+  # - name: CppRangeBasedForIncompatibleReference
+  # - name: CppRedefinitionOfDefaultArgumentInOverrideFunction
+  # - name: CppRedundantAccessSpecifier
+  # - name: CppRedundantBaseClassAccessSpecifier
+  # - name: CppRedundantBaseClassInitializer
+  # - name: CppRedundantBooleanExpressionArgument
+  # - name: CppRedundantCastExpression
+  # - name: CppRedundantComplexityInComparison
+  # - name: CppRedundantConditionalExpression
+  # - name: CppRedundantConstSpecifier
+  # - name: CppRedundantControlFlowJump
+  # - name: CppRedundantDereferencingAndTakingAddress
+  # - name: CppRedundantElaboratedTypeSpecifier
+  # - name: CppRedundantElseKeyword
+  # - name: CppRedundantElseKeywordInsideCompoundStatement
+  # - name: CppRedundantEmptyDeclaration
+  # - name: CppRedundantEmptyStatement
+  # - name: CppRedundantExportKeyword
+  # - name: CppRedundantFwdClassOrEnumSpecifier
+  # - name: CppRedundantInlineSpecifier
+  # - name: CppRedundantLambdaParameterList
+  # - name: CppRedundantMemberInitializer
+  # - name: CppRedundantNamespaceDefinition
+  # - name: CppRedundantParentheses
+  # - name: CppRedundantQualifier
+  # - name: CppRedundantQualifierADL
+  # - name: CppRedundantStaticSpecifierOnMemberAllocationFunction
+  # - name: CppRedundantStaticSpecifierOnThreadLocalLocalVariable
+  # - name: CppRedundantTemplateArguments
+  # - name: CppRedundantTemplateKeyword
+  # - name: CppRedundantTypenameKeyword
+  # - name: CppRedundantVoidArgumentList
+  # - name: CppRedundantZeroInitializerInAggregateInitialization
+  # - name: CppReinterpretCastFromVoidPtr
+  # - name: CppRemoveRedundantBraces
+  # - name: CppReplaceMemsetWithZeroInitialization
+  # - name: CppReplaceTieWithStructuredBinding
+  # - name: CppReturnNoValueInNonVoidFunction
+  # - name: CppSmartPointerVsMakeFunction
+  # - name: CppSomeObjectMembersMightNotBeInitialized
+  # - name: CppSpecialFunctionWithoutNoexceptSpecification
+  # - name: CppStaticAssertFailure
+  # - name: CppStaticDataMemberInUnnamedStruct
+  # - name: CppStaticSpecifierOnAnonymousNamespaceMember
+  # - name: CppStringLiteralToCharPointerConversion
+  # - name: CppTabsAreDisallowed
+  # - name: CppTemplateArgumentsCanBeDeduced
+  # - name: CppTemplateParameterNeverUsed
+  # - name: CppTemplateParameterShadowing
+  # - name: CppThrowExpressionCanBeReplacedWithRethrow
+  # - name: CppTooWideScope
+  # - name: CppTooWideScopeInitStatement
+  # - name: CppTypeAliasNeverUsed
+  # - name: CppUninitializedDependentBaseClass
+  # - name: CppUninitializedNonStaticDataMember
+  # - name: CppUnionMemberOfReferenceType
+  # - name: CppUnmatchedPragmaEndRegionDirective
+  # - name: CppUnmatchedPragmaRegionDirective
+  # - name: CppUnnamedNamespaceInHeaderFile
+  # - name: CppUnnecessaryWhitespace
+  # - name: CppUnsignedZeroComparison
+  # - name: CppUnusedIncludeDirective
+  # - name: CppUseAlgorithmWithCount
+  # - name: CppUseAssociativeContains
+  # - name: CppUseAuto
+  # - name: CppUseAutoForNumeric
+  # - name: CppUseElementsView
+  # - name: CppUseEraseAlgorithm
+  # - name: CppUseFamiliarTemplateSyntaxForGenericLambdas
+  # - name: CppUseRangeAlgorithm
+  # - name: CppUseStdSize
+  # - name: CppUseStructuredBinding
+  # - name: CppUseTypeTraitAlias
+  # - name: CppUserDefinedLiteralSuffixDoesNotStartWithUnderscore
+  # - name: CppUsingResultOfAssignmentAsCondition
+  # - name: CppVariableCanBeMadeConstexpr
+  # - name: CppVirtualFunctionCallInsideCtor
+  # - name: CppVirtualFunctionInFinalClass
+  # - name: CppVolatileParameterInDeclaration
+  # - name: CppWarningDirective
+  # - name: CppWrongIncludesOrder
+  # - name: CppWrongSlashesInIncludeDirective
+  # - name: CppZeroConstantCanBeReplacedWithNullptr
+  # - name: CppZeroValuedExpressionUsedAsNullPointer
+  # - name: IfStdIsConstantEvaluatedCanBeReplaced
+  # - name: Misra
+  # - name: PreprocessorComment
+  # - name: PyInterpreterInspection
+  # - name: PyUnresolvedReferencesInspection
+  # - name: RadGlobal
+  # - name: StdIsConstantEvaluatedWillAlwaysEvaluateToConstant
+exclude:
+  - name: CppAwaiterTypeIsNotClass
+  - name: CppClassIsIncomplete
+  - name: CppCoroutineCallResolveError
+  - name: CppDefaultInitializationWithNoUserConstructor
+  - name: CppEvaluationFailure
+  - name: CppExplicitSpecializationInNonNamespaceScope
+  - name: CppMutableSpecifierOnReferenceMember
+  - name: CppOutParameterMustBeWritten
+  - name: CppPrecompiledHeaderIsNotIncluded
+  - name: CppPrecompiledHeaderNotFound
+  - name: CppStaticAssertFailure
+  - name: CppTemplateParameterShadowing
+  - name: CppUninitializedDependentBaseClass
+  - name: CppUnionMemberOfReferenceType
+  - name: CppUserDefinedLiteralSuffixDoesNotStartWithUnderscore
+  - name: CppWarningDirective
+  - name: PyInterpreterInspection
+  - name: PyUnresolvedReferencesInspection
+  - name: RadGlobal
+
   # path: no-cpp.profile.yaml
 # properties:
 #   idea.log.debug.categories: "#com.jetbrains.cidr.radler.inspections.RadInspection"
