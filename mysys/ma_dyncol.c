@@ -2877,6 +2877,13 @@ dynamic_column_update_move_left(DYNAMIC_COLUMN *str, PLAN *plan,
 
   write= (uchar *)str->str + FIXED_HEADER_SIZE;
   set_fixed_header(str, (uint)new_offset_size, new_column_count);
+  if (!new_column_count)
+  {
+    // No records left
+    DBUG_ASSERT(new_header_size == 0);
+    str->length= FIXED_HEADER_SIZE;
+    return ER_DYNCOL_OK;
+  }
 
   /*
     Move headers first.
@@ -3581,7 +3588,7 @@ dynamic_column_update_many_fmt(DYNAMIC_COLUMN *str,
                                            entry_size,  header_size,
                                            new_header.offset_size,
                                            new_header.entry_size,
-                                           new_heder.header_size, column_count,
+                                           new_header.header_size, column_count,
                                            new_header.column_count,
                                            add_column_count, header_end,
                                            header.data_size);
@@ -3662,7 +3669,7 @@ mariadb_dyncol_check(DYNAMIC_COLUMN *str)
   if (fmt->fixed_hdr + header.header_size + header.nmpool_size > str->length)
   {
     DBUG_PRINT("info", ("Fixed header: %u  Header size: %u  "
-                        "Name pool size: %u  but Strig length: %u",
+                        "Name pool size: %u  but String length: %u",
                         (uint)fmt->fixed_hdr,
                         (uint)header.header_size,
                         (uint)header.nmpool_size,
@@ -3769,7 +3776,7 @@ mariadb_dyncol_check(DYNAMIC_COLUMN *str)
        i++, header.entry+= header.entry_size)
   {
     DYNAMIC_COLUMN_VALUE store;
-    // already checked by previouse pass
+    // already checked by previous pass
     (*fmt->type_and_offset_read)(&header.type, &header.offset,
                                  header.entry + fmt->fixed_hdr_entry,
                                  header.offset_size);
@@ -3841,13 +3848,13 @@ my_bool dynstr_append_json_quoted(DYNAMIC_STRING *str,
     register char c= append[i];
     if (unlikely(((uchar)c) <= 0x1F))
     {
-      if (lim < 5)
+      if (lim < 6)
         {
           if (dynstr_realloc(str, additional))
             return TRUE;
           lim+= additional;
         }
-        lim-= 5;
+        lim -= 6;
         str->str[str->length++]= '\\';
         str->str[str->length++]= 'u';
         str->str[str->length++]= '0';
@@ -3858,17 +3865,18 @@ my_bool dynstr_append_json_quoted(DYNAMIC_STRING *str,
     }
     else
     {
+      if (lim < 2)
+      {
+        if (dynstr_realloc(str, additional))
+          return TRUE;
+        lim += additional;
+      }
       if (c == '"' || c == '\\')
       {
-        if (!lim)
-        {
-          if (dynstr_realloc(str, additional))
-            return TRUE;
-          lim= additional;
-        }
         lim--;
         str->str[str->length++]= '\\';
       }
+      lim--;
       str->str[str->length++]= c;
     }
   }

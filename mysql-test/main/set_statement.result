@@ -1085,7 +1085,7 @@ SHOW CREATE TABLE t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
   `a` int(11) DEFAULT NULL
-) ENGINE=MEMORY DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci
+) ENGINE=MEMORY DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
 select @@default_storage_engine;
 @@default_storage_engine
 MyISAM
@@ -1095,7 +1095,7 @@ SHOW CREATE TABLE t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
   `a` int(11) DEFAULT NULL
-) ENGINE=MyISAM DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci
+) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
 drop table t1;
 SET @@default_storage_engine=@save_dfs;
 SET STATEMENT keycache1.key_buffer_size=1024 FOR SELECT 1;
@@ -1324,8 +1324,8 @@ DEALLOCATE PREPARE stmt;
 SHOW CREATE TABLE t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `c1` varchar(3) NOT NULL
-) ENGINE=MyISAM DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci
+  `c1` varchar(3) CHARACTER SET latin1 COLLATE latin1_swedish_ci NOT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
 DROP TABLE t1;
 # Create the table t1 with the same definition as it used before
 # using regular statement execution mode.
@@ -1335,8 +1335,8 @@ SET STATEMENT sql_mode = 'NO_ENGINE_SUBSTITUTION' FOR CREATE TABLE t1 AS SELECT 
 SHOW CREATE TABLE t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `c1` varchar(3) NOT NULL
-) ENGINE=MyISAM DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci
+  `c1` varchar(3) CHARACTER SET latin1 COLLATE latin1_swedish_ci NOT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
 DROP TABLE t1;
 #
 # MDEV-29074 GET_BIT variables crash in SET STATEMENT
@@ -1367,4 +1367,16 @@ SET sql_mode=ORACLE;
 SET STATEMENT max_statement_time=30 FOR DELETE FROM mysql.user where user = 'unknown';
 SET sql_mode=default;
 SET STATEMENT max_statement_time=30 FOR DELETE FROM mysql.user where user = 'unknown';
+#
+# MDEV-17711 Assertion `arena_for_set_stmt== 0' failed in LEX::set_arena_for_set_stmt upon SET STATEMENT
+#
+set rand_seed1=1, rand_seed2=2;
+set statement rand_seed1=4 for select 2, @@rand_seed1, @@rand_seed2;
+set statement rand_seed2=5 for select 3, @@rand_seed1, @@rand_seed2 $
+2	@@rand_seed1	@@rand_seed2
+2	4	2
+3	@@rand_seed1	@@rand_seed2
+3	1	5
+#
 # End of 10.4 tests
+#

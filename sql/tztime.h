@@ -16,11 +16,6 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1335  USA */
 
-
-#ifdef USE_PRAGMA_INTERFACE
-#pragma interface			/* gcc class interface */
-#endif
-
 #include "my_time.h"                            /* my_time_t */
 #include "mysql_time.h"                         /* MYSQL_TIME */
 #include "sql_list.h"                           /* Sql_alloc */
@@ -31,15 +26,6 @@ class THD;
 #if !defined(TESTTIME) && !defined(TZINFO2SQL)
 
 class THD;
-
-/*
-  Has only offset from UTC and abbrevation.
-*/
-struct tz
-{
-  long seconds_offset;
-  char abbrevation[64];
-};
 
 /**
   This class represents abstract time zone and provides
@@ -72,13 +58,20 @@ public:
   */
   virtual const String * get_name() const = 0;
 
-  virtual void get_timezone_information(struct tz* curr_tz, const MYSQL_TIME *local_TIME) const = 0;
+  virtual void get_timezone_information(struct my_tz* curr_tz, const MYSQL_TIME *local_TIME) const = 0;
 
   /** 
-    We need this only for surpressing warnings, objects of this type are
+    We need this only for suppressing warnings, objects of this type are
     allocated on MEM_ROOT and should not require destruction.
   */
   virtual ~Time_zone() = default;
+
+  /**
+    Check if the time zone does not have any anomalies around "sec", such as:
+    - DST changes (spring forward, fall back)
+    - leap seconds (the 60-th second)
+  */
+  bool is_monotone_continuous_around(my_time_t sec) const;
 
 protected:
   static inline void adjust_leap_second(MYSQL_TIME *t);
@@ -95,7 +88,7 @@ extern my_time_t   sec_since_epoch_TIME(MYSQL_TIME *t);
 /**
   Number of elements in table list produced by my_tz_get_table_list()
   (this table list contains tables which are needed for dynamical loading
-  of time zone descriptions). Actually it is imlementation detail that
+  of time zone descriptions). Actually it is implementation detail that
   should not be used anywhere outside of tztime.h and tztime.cc.
 */
 

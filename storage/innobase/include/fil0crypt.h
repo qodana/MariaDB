@@ -46,7 +46,7 @@ void fil_crypt_threads_signal(bool broadcast= false);
 /**
  * CRYPT_SCHEME_UNENCRYPTED
  *
- * Used as intermediate state when convering a space from unencrypted
+ * Used as intermediate state when converting a space from unencrypted
  * to encrypted
  */
 /**
@@ -74,7 +74,7 @@ struct key_struct
 extern ulong	srv_encrypt_tables;
 
 /** Mutex helper for crypt_data->scheme
-@param[in, out]	schme	encryption scheme
+@param[in, out]	scheme	encryption scheme
 @param[in]	exit	should we exit or enter mutex ? */
 void
 crypt_data_scheme_locker(
@@ -336,6 +336,11 @@ void fil_crypt_set_rotate_key_age(uint val);
 Adjust rotation iops
 @param[in]	val		New max roation iops */
 void fil_crypt_set_rotation_iops(uint val);
+
+/** Add the import tablespace to default_encrypt list
+if necessary and signal fil_crypt_threads
+@param space imported tablespace */
+void fil_crypt_add_imported_space(fil_space_t *space);
 
 /*********************************************************************
 Adjust encrypt tables

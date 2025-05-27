@@ -1,6 +1,6 @@
 /*
    Copyright (c) 2006, 2013, Oracle and/or its affiliates.
-   Copyright (c) 2010, 2017, MariaDB
+   Copyright (c) 2010, 2024, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -86,10 +86,10 @@ static struct my_option my_long_options[]=
   {"basedir", 'b',
    "Not used by mysql_upgrade. Only for backward compatibility.",
    0, 0, 0, GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
-  {"character-sets-dir", OPT_CHARSETS_DIR,
+  {"character-sets-dir", 0,
    "Not used by mysql_upgrade. Only for backward compatibility.",
    0, 0, 0, GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0 },
-  {"compress", OPT_COMPRESS,
+  {"compress", 0,
    "Not used by mysql_upgrade. Only for backward compatibility.",
    &not_used, &not_used, 0, GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
   {"datadir", 'd',
@@ -102,12 +102,12 @@ static struct my_option my_long_options[]=
   {"debug", '#', "Output debug log.",
    0, 0, 0, GET_STR, OPT_ARG, 0, 0, 0, 0, 0, 0},
 #endif
-  {"debug-check", OPT_DEBUG_CHECK, "Check memory and open file usage at exit.",
+  {"debug-check", 0, "Check memory and open file usage at exit.",
    &debug_check_flag, &debug_check_flag,
    0, GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
   {"debug-info", 'T', "Print some debug info at exit.", &debug_info_flag,
    &debug_info_flag, 0, GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
-  {"default-character-set", OPT_DEFAULT_CHARSET,
+  {"default-character-set", 0,
    "Not used by mysql_upgrade. Only for backward compatibility.",
    0, 0, 0, GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
   {"default_auth", OPT_DEFAULT_AUTH,
@@ -556,7 +556,7 @@ static void find_tool(char *tool_executable_name, const char *tool_name,
 
     len= (int)(last_fn_libchar - self_name);
 
-    my_snprintf(tool_executable_name, FN_REFLEN, "%.*b%c%s",
+    my_snprintf(tool_executable_name, FN_REFLEN, "%.*sB%c%s",
                 len, self_name, FN_LIBCHAR, tool_name);
   }
 
@@ -626,7 +626,7 @@ static int run_query(const char *query, DYNAMIC_STRING *ds_res,
     {
       my_close(fd, MYF(MY_WME));
       my_delete(query_file_path, MYF(0));
-      die("Failed to write to '%s'", query_file_path);
+      die("Failed to write query to '%s'", query_file_path);
     }
   }
 
@@ -635,7 +635,7 @@ static int run_query(const char *query, DYNAMIC_STRING *ds_res,
   {
     my_close(fd, MYF(MY_WME));
     my_delete(query_file_path, MYF(0));
-    die("Failed to write to '%s'", query_file_path);
+    die("Failed to write query to '%s'", query_file_path);
   }
 
   ret= run_tool(mysql_path,
@@ -645,6 +645,7 @@ static int run_query(const char *query, DYNAMIC_STRING *ds_res,
                 "--batch", /* Turns off pager etc. */
                 force ? "--force": "--skip-force",
                 opt_verbose >= 5 ? "--verbose" : "",
+                "--print-query-on-error",
                 ds_res || opt_silent ? "--silent": "",
                 "<",
                 query_file_path,
@@ -861,8 +862,7 @@ static int upgrade_already_done(int silent)
   s= strchr(version, '.');
   s= strchr(s + 1, '.');
 
-  if (strncmp(upgrade_from_version, version,
-              (size_t)(s - version + 1)))
+  if (strncmp(upgrade_from_version, version, (size_t)(s - version + 1)))
   {
     if (calc_server_version(upgrade_from_version) <= MYSQL_VERSION_ID)
     {
@@ -876,9 +876,14 @@ static int upgrade_already_done(int silent)
   }
   if (!silent)
   {
-    verbose("This installation of MariaDB is already upgraded to %s.\n"
-            "There is no need to run mariadb-upgrade again for %s.",
-            upgrade_from_version, version);
+    if (strcmp(upgrade_from_version, version))
+      verbose("This installation of MariaDB is already upgraded to %s.\n"
+              "There is no need to run mariadb-upgrade again for %s, because "
+              "they're both %.*s.",
+              upgrade_from_version, version, (int)(s - version), version);
+    else
+      verbose("This installation of MariaDB is already upgraded to %s.\n"
+              "There is no need to run mariadb-upgrade again.", version);
     if (!opt_check_upgrade)
       verbose("You can use --force if you still want to run mariadb-upgrade");
   }
@@ -1092,18 +1097,6 @@ static char* get_line(char* line)
   return line;
 }
 
-
-/* Print the current line to stderr */
-static void print_line(char* line)
-{
-  while (*line && *line != '\n')
-  {
-    fputc(*line, stderr);
-    line++;
-  }
-  fputc('\n', stderr);
-}
-
 static my_bool from_before_10_1()
 {
   my_bool ret= TRUE;
@@ -1166,6 +1159,8 @@ static int install_used_plugin_data_types(void)
   DYNAMIC_STRING ds_result;
   const char *query = "SELECT table_comment FROM information_schema.tables"
                       " WHERE table_comment LIKE 'Unknown data type: %'";
+  if (opt_systables_only)
+    return 0;
   if (init_dynamic_string(&ds_result, "", 512, 512))
     die("Out of memory");
   run_query(query, &ds_result, TRUE);
@@ -1320,16 +1315,21 @@ static int check_slave_repositories(void)
 
 static int run_sql_fix_privilege_tables(void)
 {
-  int found_real_errors= 0;
+  int found_real_errors= 0, query_started= 0;
   const char **query_ptr;
+  const char *end;
   DYNAMIC_STRING ds_script;
   DYNAMIC_STRING ds_result;
+  DYNAMIC_STRING ds_query;
   DBUG_ENTER("run_sql_fix_privilege_tables");
 
-  if (init_dynamic_string(&ds_script, "", 65536, 1024))
+  if (init_dynamic_string(&ds_script, "", 96*1024, 8196))
     die("Out of memory");
 
-  if (init_dynamic_string(&ds_result, "", 512, 512))
+  if (init_dynamic_string(&ds_result, "", 1024, 1024))
+    die("Out of memory");
+
+  if (init_dynamic_string(&ds_query, "", 1024, 1024))
     die("Out of memory");
 
   verbose("Phase %d/%d: Running 'mysql_fix_privilege_tables'",
@@ -1358,22 +1358,46 @@ static int run_sql_fix_privilege_tables(void)
       "Unknown column" and "Duplicate key name" since they just
       indicate the system tables are already up to date
     */
-    char *line= ds_result.str;
+    const char *line= ds_result.str;
     do
     {
+      size_t length;
+      end= strchr(line, '\n');
+      if (!end)
+        end= strend(line);
+      else
+        end++;                                  /* Include end \n */
+      length= (size_t) (end - line);
+
       if (!is_expected_error(line))
       {
         /* Something unexpected failed, dump error line to screen */
         found_real_errors++;
-        print_line(line);
+        if (ds_query.length)
+          fwrite(ds_query.str, sizeof(char), ds_query.length, stderr);
+        fwrite(line, sizeof(char), length, stderr);
+        query_started= 0;
       }
       else if (strncmp(line, "WARNING", 7) == 0)
       {
-        print_line(line);
+        fwrite(line, sizeof(char), length, stderr);
+        query_started= 0;
       }
-    } while ((line= get_line(line)) && *line);
+      else if (!strncmp(line, "--------------\n", 16))
+      {
+        /* mariadb separates query from the error with a line of '-' */
+        if (!query_started++)
+          ds_query.length= 0;                   /* Truncate */
+        else
+          query_started= 0;                     /* End of query */
+      }
+      else if (query_started)
+      {
+        dynstr_append_mem(&ds_query, line, length);
+      }
+    } while (*(line= end));
   }
-
+  dynstr_free(&ds_query);
   dynstr_free(&ds_result);
   dynstr_free(&ds_script);
   DBUG_RETURN(found_real_errors);
@@ -1482,7 +1506,12 @@ int main(int argc, char **argv)
   open_mysql_upgrade_file();
 
   if (opt_check_upgrade)
-    exit(upgrade_already_done(0) == 0);
+  {
+    int upgrade_needed = upgrade_already_done(0);
+    free_used_memory();
+    my_end(my_end_arg);
+    exit(upgrade_needed == 0);
+  }
 
   /* Find mysqlcheck */
   find_tool(mysqlcheck_path, IF_WIN("mariadb-check.exe", "mariadb-check"), self_name);

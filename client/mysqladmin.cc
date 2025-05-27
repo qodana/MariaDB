@@ -1,6 +1,6 @@
 /*
    Copyright (c) 2000, 2014, Oracle and/or its affiliates.
-   Copyright (c) 2010, 2019, MariaDB
+   Copyright (c) 2010, 2024, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -17,7 +17,7 @@
 
 /* maintenance of mysql databases */
 
-#define VER "9.1"
+#define VER "10.0"
 #include "client_priv.h"
 #include <signal.h>
 #include <my_pthread.h>				/* because of signal()	*/
@@ -36,12 +36,12 @@ char *host= NULL, *user= 0, *opt_password= 0,
      *default_charset= (char*) MYSQL_AUTODETECT_CHARSET_NAME;
 ulonglong last_values[MAX_MYSQL_VAR+100];
 static int interval=0;
-static my_bool option_force=0,interrupted=0,new_line=0,
-               opt_compress= 0, opt_local= 0, opt_relative= 0, opt_verbose= 0,
-               tty_password= 0, opt_nobeep, opt_shutdown_wait_for_slaves= 0;
+static my_bool option_force=0,interrupted=0,new_line=0, opt_compress= 0,
+               opt_local= 0, opt_relative= 0, tty_password= 0, opt_nobeep,
+               opt_shutdown_wait_for_slaves= 0, opt_not_used;
 static my_bool debug_info_flag= 0, debug_check_flag= 0;
-static uint tcp_port = 0, option_wait = 0, option_silent=0, nr_iterations;
-static uint opt_count_iterations= 0, my_end_arg;
+static uint opt_mysql_port = 0, option_wait = 0, option_silent=0, nr_iterations;
+static uint opt_count_iterations= 0, my_end_arg, opt_verbose= 0;
 static ulong opt_connect_timeout, opt_shutdown_timeout;
 static char * unix_port=0;
 static char *opt_plugin_dir= 0, *opt_default_auth= 0;
@@ -111,8 +111,7 @@ static const char *command_names[]= {
   NullS
 };
 
-static TYPELIB command_typelib=
-{ array_elements(command_names)-1,"commands", command_names, NULL};
+static TYPELIB command_typelib= CREATE_TYPELIB_FOR(command_names);
 
 static struct my_option my_long_options[] =
 {
@@ -124,10 +123,10 @@ static struct my_option my_long_options[] =
   {"debug", '#', "Output debug log. Often this is 'd:t:o,filename'.",
    0, 0, 0, GET_STR, OPT_ARG, 0, 0, 0, 0, 0, 0},
 #endif
-  {"debug-check", OPT_DEBUG_CHECK, "Check memory and open file usage at exit.",
+  {"debug-check", 0, "Check memory and open file usage at exit.",
    &debug_check_flag, &debug_check_flag, 0,
    GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
-  {"debug-info", OPT_DEBUG_INFO, "Print some debug info at exit.",
+  {"debug-info", 0, "Print some debug info at exit.",
    &debug_info_flag, &debug_info_flag,
    0, GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
   {"force", 'f',
@@ -141,13 +140,14 @@ static struct my_option my_long_options[] =
   {"character-sets-dir", OPT_CHARSETS_DIR,
    "Directory for character set files.", &charsets_dir,
    &charsets_dir, 0, GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
-  {"default-character-set", OPT_DEFAULT_CHARSET,
+  {"default-character-set", 0,
    "Set the default character set.", &default_charset,
    &default_charset, 0, GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
   {"help", '?', "Display this help and exit.", 0, 0, 0, GET_NO_ARG,
    NO_ARG, 0, 0, 0, 0, 0, 0},
-  {"host", 'h', "Connect to host.", &host, &host, 0, GET_STR,
-   REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
+  {"host", 'h', "Connect to host. Defaults in the following order: "
+  "$MARIADB_HOST, and then localhost",
+   &host, &host, 0, GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
   {"local", 'l', "Local command, don't write to binlog.",
    &opt_local, &opt_local, 0, GET_BOOL, NO_ARG, 0, 0, 0,
    0, 0, 0},
@@ -166,7 +166,7 @@ static struct my_option my_long_options[] =
    "/etc/services, "
 #endif
    "built-in default (" STRINGIFY_ARG(MYSQL_PORT) ").",
-   &tcp_port, &tcp_port, 0, GET_UINT, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
+   &opt_mysql_port, &opt_mysql_port, 0, GET_UINT, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
   {"protocol", OPT_MYSQL_PROTOCOL, "The protocol to use for connection (tcp, socket, pipe).",
     0, 0, 0, GET_STR,  REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
   {"relative", 'r',
@@ -187,27 +187,29 @@ static struct my_option my_long_options[] =
   {"user", 'u', "User for login if not current user.", &user,
    &user, 0, GET_STR_ALLOC, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
 #endif
-  {"verbose", 'v', "Write more information.", &opt_verbose,
-   &opt_verbose, 0, GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
+  {"verbose", 'v', "Write more information."
+  "Using it will print more information for 'processlist."
+  "Using it 2 times will print even more information for 'processlist'.",
+   &opt_not_used, &opt_not_used, 0, GET_BOOL, NO_ARG, 1, 0, 0, 0, 0, 0},
   {"version", 'V', "Output version information and exit.", 0, 0, 0, GET_NO_ARG,
    NO_ARG, 0, 0, 0, 0, 0, 0},
   {"wait", 'w', "Wait and retry if connection is down.", 0, 0, 0, GET_UINT,
    OPT_ARG, 0, 0, 0, 0, 0, 0},
-  {"connect_timeout", OPT_CONNECT_TIMEOUT, "", &opt_connect_timeout,
+  {"connect_timeout", 0, "", &opt_connect_timeout,
    &opt_connect_timeout, 0, GET_ULONG, REQUIRED_ARG, 3600*12, 0,
    3600*12, 0, 1, 0},
-  {"shutdown_timeout", OPT_SHUTDOWN_TIMEOUT, "", &opt_shutdown_timeout,
+  {"shutdown_timeout", 0, "", &opt_shutdown_timeout,
    &opt_shutdown_timeout, 0, GET_ULONG, REQUIRED_ARG,
    SHUTDOWN_DEF_TIMEOUT, 0, 3600*12, 0, 1, 0},
-  {"wait_for_all_slaves", OPT_SHUTDOWN_WAIT_FOR_SLAVES,
+  {"wait_for_all_slaves", 0,
    "Defers shutdown until after all binlogged events have been sent to "
    "all connected slaves", &opt_shutdown_wait_for_slaves,
    &opt_shutdown_wait_for_slaves, 0, GET_BOOL, NO_ARG, 0, 0, 0,
    0, 0, 0},
-  {"plugin_dir", OPT_PLUGIN_DIR, "Directory for client-side plugins.",
+  {"plugin_dir", 0, "Directory for client-side plugins.",
     &opt_plugin_dir, &opt_plugin_dir, 0,
    GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
-  {"default_auth", OPT_DEFAULT_AUTH,
+  {"default_auth", 0,
    "Default authentication client-side plugin to use.",
    &opt_default_auth, &opt_default_auth, 0,
    GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
@@ -277,6 +279,11 @@ get_one_option(const struct my_option *opt, const char *argument,
   case 'I':					/* Info */
     usage();
     exit(0);
+  case 'v':                                     /* --verbose   */
+    opt_verbose++;
+    if (argument == disabled_my_option)
+      opt_verbose= 0;
+    break;
   case OPT_CHARSETS_DIR:
 #if MYSQL_VERSION_ID > 32300
     charsets_dir = argument;
@@ -322,6 +329,9 @@ int main(int argc,char *argv[])
   MYSQL mysql;
   char **commands, **save_argv, **temp_argv;
 
+  if (host == NULL)
+    host= getenv("MARIADB_HOST");
+
   MY_INIT(argv[0]);
   sf_leaking_memory=1; /* don't report memory leaks on early exits */
 
@@ -363,18 +373,9 @@ int main(int argc,char *argv[])
     uint tmp=opt_connect_timeout;
     mysql_options(&mysql,MYSQL_OPT_CONNECT_TIMEOUT, (char*) &tmp);
   }
-#ifdef HAVE_OPENSSL
-  if (opt_use_ssl)
-  {
-    mysql_ssl_set(&mysql, opt_ssl_key, opt_ssl_cert, opt_ssl_ca,
-		  opt_ssl_capath, opt_ssl_cipher);
-    mysql_options(&mysql, MYSQL_OPT_SSL_CRL, opt_ssl_crl);
-    mysql_options(&mysql, MYSQL_OPT_SSL_CRLPATH, opt_ssl_crlpath);
-    mysql_options(&mysql, MARIADB_OPT_TLS_VERSION, opt_tls_version);
-  }
-  mysql_options(&mysql,MYSQL_OPT_SSL_VERIFY_SERVER_CERT,
-                (char*)&opt_ssl_verify_server_cert);
-#endif
+
+  SET_SSL_OPTS_WITH_CHECK(&mysql);
+
   if (opt_protocol)
     mysql_options(&mysql,MYSQL_OPT_PROTOCOL,(char*)&opt_protocol);
   if (!strcmp(default_charset,MYSQL_AUTODETECT_CHARSET_NAME))
@@ -423,7 +424,7 @@ int main(int argc,char *argv[])
       is given a t!=0, we get an endless loop, or n iterations if --count=n
       was given an n!=0. If --sleep wasn't given, we get one iteration.
 
-      To wit, --wait loops the connection-attempts, while --sleep loops
+      To wait, --wait loops the connection-attempts, while --sleep loops
       the command execution (endlessly if no --count is given).
     */
 
@@ -441,6 +442,7 @@ int main(int argc,char *argv[])
 	if (error > 0)
 	  break;
 
+        error= -error; /* don't exit with negative error codes */
         /*
           Command was well-formed, but failed on the server. Might succeed
           on retry (if conditions on server change etc.), but needs --force
@@ -534,7 +536,7 @@ static my_bool sql_connect(MYSQL *mysql, uint wait)
 
   for (;;)
   {
-    if (mysql_real_connect(mysql,host,user,opt_password,NullS,tcp_port,
+    if (mysql_real_connect(mysql,host,user,opt_password,NullS,opt_mysql_port,
 			   unix_port, CLIENT_REMEMBER_OPTIONS))
     {
       my_bool reconnect= 1;
@@ -566,9 +568,9 @@ static my_bool sql_connect(MYSQL *mysql, uint wait)
 	{
 	  fprintf(stderr,"Check that mariadbd is running on %s",host);
 	  fprintf(stderr," and that the port is %d.\n",
-		  tcp_port ? tcp_port: mysql_port);
+		  opt_mysql_port ? opt_mysql_port: mysql_port);
 	  fprintf(stderr,"You can check this by doing 'telnet %s %d'\n",
-		  host, tcp_port ? tcp_port: mysql_port);
+		  host, opt_mysql_port ? opt_mysql_port: mysql_port);
 	}
       }
       return 1;
@@ -806,10 +808,17 @@ static int execute_commands(MYSQL *mysql,int argc, char **argv)
     {
       MYSQL_RES *result;
       MYSQL_ROW row;
+      const char *query;
 
-      if (mysql_query(mysql, (opt_verbose ? "show full processlist" :
-			      "show processlist")) ||
-	  !(result = mysql_store_result(mysql)))
+      if (!opt_verbose)
+        query= "show processlist";
+      else if (opt_verbose == 1)
+        query= "show full processlist";
+      else
+        query= "select * from information_schema.processlist where id != connection_id()";
+
+      if (mysql_query(mysql, query) ||
+          !(result = mysql_store_result(mysql)))
       {
 	my_printf_error(0, "process list failed; error: '%s'", error_flags,
 			mysql_error(mysql));
@@ -979,7 +988,7 @@ static int execute_commands(MYSQL *mysql,int argc, char **argv)
     }
     case ADMIN_FLUSH_STATUS:
     {
-      if (flush(mysql, "status"))
+      if (flush(mysql, "/*!110500 global */ status"))
 	return -1;
       break;
     }
@@ -1028,8 +1037,9 @@ static int execute_commands(MYSQL *mysql,int argc, char **argv)
     }
     case ADMIN_FLUSH_ALL_STATUS:
     {
-      if (flush(mysql, "status,table_statistics,index_statistics,"
-                       "user_statistics,client_statistics"))
+      if (flush(mysql,
+                "/*!110500 global */ status,table_statistics,"
+                "index_statistics, user_statistics,client_statistics"))
 	return -1;
       break;
     }
@@ -1129,24 +1139,8 @@ static int execute_commands(MYSQL *mysql,int argc, char **argv)
       else
       if (mysql_query(mysql,buff))
       {
-	if (mysql_errno(mysql)!=1290)
-	{
-	  my_printf_error(0,"unable to change password; error: '%s'",
-			  error_flags, mysql_error(mysql));
-	}
-	else
-	{
-	  /*
-	    We don't try to execute 'update mysql.user set..'
-	    because we can't perfectly find out the host
-	   */
-	  my_printf_error(0,"\n"
-			  "You cannot use 'password' command as mariadbd runs\n"
-			  " with grant tables disabled (was started with"
-			  " --skip-grant-tables).\n"
-			  "Use: \"mysqladmin flush-privileges password '*'\""
-			  " instead", error_flags);
-	}
+        my_printf_error(0,"unable to change password; error: '%s'",
+                        error_flags, mysql_error(mysql));
         ret = -1;
       }
 password_done:
@@ -1352,7 +1346,9 @@ static void usage(void)
   refresh		Flush all tables and close and open logfiles\n\
   shutdown		Take server down\n\
   status		Gives a short status message from the server\n\
+  start-all-slaves	Start all slaves\n\
   start-slave		Start slave\n\
+  stop-all-slaves	Stop all slaves\n\
   stop-slave		Stop slave\n\
   variables             Prints variables available\n\
   version		Get version info from server");

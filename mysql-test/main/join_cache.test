@@ -1,6 +1,7 @@
 --source include/no_valgrind_without_big.inc
 --source include/default_optimizer_switch.inc
 --source include/default_charset.inc
+--source include/test_db_charset_latin1.inc
 
 --disable_warnings
 DROP TABLE IF EXISTS t1,t2,t3,t4,t5,t6,t7,t8,t9,t10,t11;
@@ -30,7 +31,7 @@ set global innodb_stats_persistent_sample_pages=100;
 
 set names utf8;
 
-CREATE DATABASE world;
+CREATE DATABASE world CHARACTER SET latin1;
 
 use world;
 
@@ -394,7 +395,7 @@ set join_buffer_size=@save_join_buffer_size;
 DROP DATABASE world; 
 
 
-CREATE DATABASE world;
+CREATE DATABASE world CHARACTER SET latin1;
 
 use world;
 
@@ -456,24 +457,19 @@ SELECT Name FROM City
         City.Population > 100000;
 
 --echo # Part 2, join_cache_level=3, Query 7
-#enable after fix MDEV-27871
---disable_view_protocol
-
 EXPLAIN
-SELECT Country.Name, IF(ISNULL(CountryLanguage.Country), NULL, CountryLanguage.Percentage)
+SELECT Country.Name, IF(ISNULL(CountryLanguage.Country), NULL, CountryLanguage.Percentage) as epx
   FROM Country LEFT JOIN CountryLanguage ON
        (CountryLanguage.Country=Country.Code AND Language='English')
   WHERE 
        Country.Population > 10000000;
 
 --echo # Part 2, join_cache_level=3, Query 8
-SELECT Country.Name, IF(ISNULL(CountryLanguage.Country), NULL, CountryLanguage.Percentage)
+SELECT Country.Name, IF(ISNULL(CountryLanguage.Country), NULL, CountryLanguage.Percentage) as epx
   FROM Country LEFT JOIN CountryLanguage ON
        (CountryLanguage.Country=Country.Code AND Language='English')
   WHERE 
        Country.Population > 10000000;
-
---enable_view_protocol
 
 show variables like 'join_buffer_size';
 set join_cache_level=4;
@@ -523,24 +519,20 @@ SELECT Name FROM City
         City.Population > 100000;
 
 --echo # Part 2, join_cache_level=4, Query 7
-#enable after fix MDEV-27871
---disable_view_protocol
-
 EXPLAIN
-SELECT Country.Name, IF(ISNULL(CountryLanguage.Country), NULL, CountryLanguage.Percentage)
+SELECT Country.Name, IF(ISNULL(CountryLanguage.Country), NULL, CountryLanguage.Percentage) as epx
   FROM Country LEFT JOIN CountryLanguage ON
        (CountryLanguage.Country=Country.Code AND Language='English')
   WHERE 
        Country.Population > 10000000;
 
 --echo # Part 2, join_cache_level=4, Query 8
-SELECT Country.Name, IF(ISNULL(CountryLanguage.Country), NULL, CountryLanguage.Percentage)
+SELECT Country.Name, IF(ISNULL(CountryLanguage.Country), NULL, CountryLanguage.Percentage) as epx
   FROM Country LEFT JOIN CountryLanguage ON
        (CountryLanguage.Country=Country.Code AND Language='English')
   WHERE 
        Country.Population > 10000000;
 
---enable_view_protocol
 --echo # Part 2, join_cache_level=4, Query 9
 --replace_column 9 #
 EXPLAIN
@@ -615,23 +607,18 @@ SELECT Name FROM City
   WHERE City.Country IN (SELECT Code FROM Country WHERE Country.Name LIKE 'L%') AND
         City.Population > 100000;
 
-#enable after fix MDEV-27871
---disable_view_protocol
-
 EXPLAIN
-SELECT Country.Name, IF(ISNULL(CountryLanguage.Country), NULL, CountryLanguage.Percentage)
+SELECT Country.Name, IF(ISNULL(CountryLanguage.Country), NULL, CountryLanguage.Percentage) as epx
   FROM Country LEFT JOIN CountryLanguage ON
        (CountryLanguage.Country=Country.Code AND Language='English')
   WHERE 
        Country.Population > 10000000;
 
-SELECT Country.Name, IF(ISNULL(CountryLanguage.Country), NULL, CountryLanguage.Percentage)
+SELECT Country.Name, IF(ISNULL(CountryLanguage.Country), NULL, CountryLanguage.Percentage) as epx
   FROM Country LEFT JOIN CountryLanguage ON
        (CountryLanguage.Country=Country.Code AND Language='English')
   WHERE 
        Country.Population > 10000000;
-
---enable_view_protocol
 
 set join_cache_level=6;
 show variables like 'join_cache_level';
@@ -673,23 +660,18 @@ SELECT Name FROM City
   WHERE City.Country IN (SELECT Code FROM Country WHERE Country.Name LIKE 'L%') AND
         City.Population > 100000;
 
-#enable after fix MDEV-27871
---disable_view_protocol
-
 EXPLAIN
-SELECT Country.Name, IF(ISNULL(CountryLanguage.Country), NULL, CountryLanguage.Percentage)
+SELECT Country.Name, IF(ISNULL(CountryLanguage.Country), NULL, CountryLanguage.Percentage) as epx
   FROM Country LEFT JOIN CountryLanguage ON
        (CountryLanguage.Country=Country.Code AND Language='English')
   WHERE 
        Country.Population > 10000000;
 
-SELECT Country.Name, IF(ISNULL(CountryLanguage.Country), NULL, CountryLanguage.Percentage)
+SELECT Country.Name, IF(ISNULL(CountryLanguage.Country), NULL, CountryLanguage.Percentage) as epx
   FROM Country LEFT JOIN CountryLanguage ON
        (CountryLanguage.Country=Country.Code AND Language='English')
   WHERE 
        Country.Population > 10000000;
-
---enable_view_protocol
 
 set join_cache_level=7;
 show variables like 'join_cache_level';
@@ -731,23 +713,18 @@ SELECT Name FROM City
   WHERE City.Country IN (SELECT Code FROM Country WHERE Country.Name LIKE 'L%') AND
         City.Population > 100000;
 
-#enable after fix MDEV-27871
---disable_view_protocol
-
 EXPLAIN
-SELECT Country.Name, IF(ISNULL(CountryLanguage.Country), NULL, CountryLanguage.Percentage)
+SELECT Country.Name, IF(ISNULL(CountryLanguage.Country), NULL, CountryLanguage.Percentage) as epx
   FROM Country LEFT JOIN CountryLanguage ON
        (CountryLanguage.Country=Country.Code AND Language='English')
   WHERE 
        Country.Population > 10000000;
 
-SELECT Country.Name, IF(ISNULL(CountryLanguage.Country), NULL, CountryLanguage.Percentage)
+SELECT Country.Name, IF(ISNULL(CountryLanguage.Country), NULL, CountryLanguage.Percentage) as epx
   FROM Country LEFT JOIN CountryLanguage ON
        (CountryLanguage.Country=Country.Code AND Language='English')
   WHERE 
        Country.Population > 10000000;
-
---enable_view_protocol
 
 set join_cache_level=8;
 show variables like 'join_cache_level';
@@ -789,23 +766,19 @@ SELECT Name FROM City
   WHERE City.Country IN (SELECT Code FROM Country WHERE Country.Name LIKE 'L%') AND
         City.Population > 100000;
 
-#enable after fix MDEV-27871
---disable_view_protocol
-
 EXPLAIN
-SELECT Country.Name, IF(ISNULL(CountryLanguage.Country), NULL, CountryLanguage.Percentage)
+SELECT Country.Name, IF(ISNULL(CountryLanguage.Country), NULL, CountryLanguage.Percentage) as epx
   FROM Country LEFT JOIN CountryLanguage ON
        (CountryLanguage.Country=Country.Code AND Language='English')
   WHERE 
        Country.Population > 10000000;
 
-SELECT Country.Name, IF(ISNULL(CountryLanguage.Country), NULL, CountryLanguage.Percentage)
+SELECT Country.Name, IF(ISNULL(CountryLanguage.Country), NULL, CountryLanguage.Percentage) as epx
   FROM Country LEFT JOIN CountryLanguage ON
        (CountryLanguage.Country=Country.Code AND Language='English')
   WHERE 
        Country.Population > 10000000;
 
---enable_view_protocol
 
 set join_buffer_size=256;
 show variables like 'join_buffer_size';
@@ -3689,7 +3662,7 @@ drop table t1,t2,t3,t4;
 
 --echo #
 --echo # Bug#50358 - semijoin execution of subquery with outerjoin
---echo #             emplying join buffer
+--echo #             implying join buffer
 --echo #
 
 CREATE TABLE t1 (i int);
@@ -3843,7 +3816,7 @@ DROP table t1,t2,t3;
 set join_buffer_size=@save_join_buffer_size;
 
 #
-# --echo switch to use orginal test suite optimizer switch
+# --echo switch to use original test suite optimizer switch
 #
 
 set @@optimizer_switch=@org_optimizer_switch,@local_optimizer_switch= @org_optimizer_switch;
@@ -4256,7 +4229,7 @@ explain format=json
 select *
 from t1 a, t3 b
 where
-  b.kp1=a.a and
+  b.kp1+1=a.a+1 and
   b.kp1 <= 10 and
   b.kp2 <= 10 and
   b.col1 +1 < 33333;
@@ -4305,5 +4278,136 @@ SELECT * FROM information_schema.statistics JOIN information_schema.COLUMNS USIN
 --enable_result_log
 
 --echo #
+--echo # MDEV-32351: Join buffer used for outer join with ON condition
+--echo #             depending only on outer tables
+--echo #
+
+--source include/have_sequence.inc
+
+CREATE TABLE t1 (b int NOT NULL, PRIMARY KEY (b)) ENGINE=MYISAM;
+INSERT INTO t1 select seq from seq_1_to_10000;
+CREATE TABLE t2 (b int NOT NULL, d varchar(255), KEY (b)) ENGINE=MYISAM ;
+INSERT INTO t2 VALUES (1,1),(2,2),(3,3);
+CREATE TABLE t3 (c int NOT NULL, PRIMARY KEY (c)) ENGINE=MYISAM ;
+INSERT INTO t3 select seq from seq_1_to_3000;
+CREATE TABLE t4 (c int NOT NULL, PRIMARY KEY (c)) ENGINE=MYISAM;
+INSERT INTO t4 select seq from seq_1_to_3000;
+ANALYZE TABLE t1,t2,t3,t4;
+
+let $q1=
+SELECT COUNT(*)
+FROM t1
+     LEFT JOIN t2 ON t1.b = t2.b
+     LEFT JOIN t3 ON t2.d = t3.c
+     LEFT JOIN t4 ON t3.c=1;
+
+set join_cache_level=0;
+eval EXPLAIN $q1;
+eval $q1;
+set join_cache_level=default;
+eval EXPLAIN $q1;
+eval $q1;
+
+DROP TABLE t1,t2,t3,t4;
+
+CREATE TABLE t1 (b int NOT NULL, PRIMARY KEY (b));
+INSERT INTO t1 select seq from seq_1_to_10;
+CREATE TABLE t2 (b int NOT NULL, d varchar(255), KEY (b)) ;
+INSERT INTO t2 VALUES (1,1),(2,2),(3,3);
+CREATE TABLE t3 (c int NOT NULL, PRIMARY KEY (c)) ;
+INSERT INTO t3 select seq from seq_1_to_3;
+CREATE TABLE t4 (c int NOT NULL, PRIMARY KEY (c)) ;
+INSERT INTO t4 select seq from seq_1_to_3;
+
+let $q2=
+SELECT *
+FROM t1
+     LEFT JOIN t2 ON t1.b = t2.b
+     LEFT JOIN t3 ON t2.d = t3.c
+     LEFT JOIN t4 ON t3.c=1;
+
+set join_cache_level=0;
+eval EXPLAIN $q2;
+eval $q2;
+set join_cache_level=default;
+eval EXPLAIN $q2;
+eval $q2;
+
+DROP TABLE t1,t2,t3,t4;
+
+--echo #
+--echo # MDEV-21102: Server crashes in JOIN_CACHE::write_record_data upon EXPLAIN with subqueries and constant tables
+--echo #
+CREATE TABLE t1 (a int, b int) ENGINE=MyISAM;
+
+CREATE TABLE t2 (c int, d int) ENGINE=MyISAM;
+INSERT INTO t2 VALUES (1,10);
+
+CREATE TABLE t3 (e int, key (e)) ENGINE=MyISAM;
+INSERT INTO t3 VALUES (2),(3);
+
+--echo # Must not crash, must use join buffer in subquery
+EXPLAIN
+SELECT * FROM t1
+WHERE a > b OR a IN (
+    SELECT c FROM t2 WHERE EXISTS (
+        SELECT * FROM t3 t3a JOIN t3 t3b WHERE t3a.e < d
+    )
+);
+DROP TABLE t1,t2,t3;
+
+--echo #
 --echo # End of 10.4 tests
 --echo #
+
+
+--echo #
+--echo # MDEV-34580: Assertion `(key_part->key_part_flag & 4) == 0' failed key_hashnr
+--echo #
+--source include/have_sequence.inc
+SET join_cache_level=3;
+
+CREATE TABLE t1 ( a TIMESTAMP , b varchar(100), c varchar(10) ) ;
+INSERT INTO t1 (b,c) VALUES ('GHOBS','EMLCG'),('t','p');
+
+CREATE TABLE t2 (a varchar(100), b varchar(100), c varchar(10) , KEY b (b(66))) ;
+insert into t2 select seq, seq, seq from seq_1_to_20;
+
+explain
+SELECT t1.a FROM t1  JOIN t2 ON t1.b = t2.b ;
+SELECT t1.a FROM t1  JOIN t2 ON t1.b = t2.b ;
+
+set join_cache_level=default;
+DROP TABLE t1, t2;
+--echo #
+--echo # End of 10.5 tests
+--echo #
+
+--echo #
+--echo # MDEV-36165: BKA join cache buffer is employed despite join_cache_level=3 (flat BNLH)
+--echo #
+--source include/have_sequence.inc
+CREATE TABLE t1(a INT);
+INSERT INTO t1 VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9);
+CREATE TABLE t2(a INT, b INT);
+INSERT INTO t2 SELECT a, a from t1;
+CREATE TABLE t3(a INT, b INT, c INT, key (a,b));
+INSERT INTO t3 select a, a, a FROM t1;
+
+SET optimizer_switch = 'join_cache_hashed=off,join_cache_bka=on,mrr=on';
+
+SET join_cache_level = 3;
+EXPLAIN SELECT * FROM t2, t3 WHERE t2.a=t3.a AND (t3.b+1 <= t2.b+1);
+
+SET join_cache_level = 4;
+EXPLAIN SELECT * FROM t2, t3 WHERE t2.a=t3.a AND (t3.b+1 <= t2.b+1);
+
+SET join_cache_level = default;
+SET optimizer_switch = default;
+DROP TABLE t1, t2, t3;
+
+--echo #
+--echo # End of 10.11 tests
+--echo #
+
+--source include/test_db_charset_restore.inc

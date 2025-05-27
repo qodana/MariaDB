@@ -34,7 +34,7 @@ TABLE_NAME	varchar(64)	NO		NULL
 NON_UNIQUE	bigint(1)	NO		NULL	
 INDEX_SCHEMA	varchar(64)	NO		NULL	
 INDEX_NAME	varchar(64)	NO		NULL	
-SEQ_IN_INDEX	bigint(2)	NO		NULL	
+SEQ_IN_INDEX	int(2) unsigned	NO		NULL	
 COLUMN_NAME	varchar(64)	NO		NULL	
 COLLATION	varchar(1)	YES		NULL	
 CARDINALITY	bigint(21)	YES		NULL	
@@ -42,7 +42,7 @@ SUB_PART	bigint(3)	YES		NULL
 PACKED	varchar(10)	YES		NULL	
 NULLABLE	varchar(3)	NO		NULL	
 INDEX_TYPE	varchar(16)	NO		NULL	
-COMMENT	varchar(16)	YES		NULL	
+COMMENT	varchar(16)	NO		NULL	
 INDEX_COMMENT	varchar(1024)	NO		NULL	
 IGNORED	varchar(3)	NO		NULL	
 SHOW CREATE TABLE information_schema.STATISTICS;
@@ -54,7 +54,7 @@ STATISTICS	CREATE TEMPORARY TABLE `STATISTICS` (
   `NON_UNIQUE` bigint(1) NOT NULL,
   `INDEX_SCHEMA` varchar(64) NOT NULL,
   `INDEX_NAME` varchar(64) NOT NULL,
-  `SEQ_IN_INDEX` bigint(2) NOT NULL,
+  `SEQ_IN_INDEX` int(2) unsigned NOT NULL,
   `COLUMN_NAME` varchar(64) NOT NULL,
   `COLLATION` varchar(1),
   `CARDINALITY` bigint(21),
@@ -62,7 +62,7 @@ STATISTICS	CREATE TEMPORARY TABLE `STATISTICS` (
   `PACKED` varchar(10),
   `NULLABLE` varchar(3) NOT NULL,
   `INDEX_TYPE` varchar(16) NOT NULL,
-  `COMMENT` varchar(16),
+  `COMMENT` varchar(16) NOT NULL,
   `INDEX_COMMENT` varchar(1024) NOT NULL,
   `IGNORED` varchar(3) NOT NULL
 ) ENGINE=MEMORY DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_general_ci
@@ -74,7 +74,7 @@ TABLE_NAME	varchar(64)	NO		NULL
 NON_UNIQUE	bigint(1)	NO		NULL	
 INDEX_SCHEMA	varchar(64)	NO		NULL	
 INDEX_NAME	varchar(64)	NO		NULL	
-SEQ_IN_INDEX	bigint(2)	NO		NULL	
+SEQ_IN_INDEX	int(2) unsigned	NO		NULL	
 COLUMN_NAME	varchar(64)	NO		NULL	
 COLLATION	varchar(1)	YES		NULL	
 CARDINALITY	bigint(21)	YES		NULL	
@@ -82,7 +82,7 @@ SUB_PART	bigint(3)	YES		NULL
 PACKED	varchar(10)	YES		NULL	
 NULLABLE	varchar(3)	NO		NULL	
 INDEX_TYPE	varchar(16)	NO		NULL	
-COMMENT	varchar(16)	YES		NULL	
+COMMENT	varchar(16)	NO		NULL	
 INDEX_COMMENT	varchar(1024)	NO		NULL	
 IGNORED	varchar(3)	NO		NULL	
 SELECT table_catalog, table_schema, table_name, index_schema, index_name
@@ -263,8 +263,6 @@ ORDER BY table_schema,table_name,index_name,seq_in_index,column_name;
 TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	INDEX_SCHEMA	INDEX_NAME	SEQ_IN_INDEX	COLUMN_NAME	COLLATION	CARDINALITY	SUB_PART	PACKED	NULLABLE	INDEX_TYPE	COMMENT	INDEX_COMMENT	IGNORED
 def	db_datadict	t1	1	db_datadict	f2_ind	1	f2	NULL	0	NULL	NULL	YES	HASH			NO
 def	db_datadict	t1	0	db_datadict	PRIMARY	1	f1	NULL	0	NULL	NULL		HASH			NO
-def	db_datadict_2	t3	1	db_datadict_2	f2f1_ind	1	f2	NULL	NULL	NULL	NULL	YES	HASH			NO
-def	db_datadict_2	t3	1	db_datadict_2	f2f1_ind	2	f1	NULL	0	NULL	NULL		HASH			NO
 def	db_datadict_2	t3	0	db_datadict_2	f5	1	f5	NULL	0	NULL	NULL	YES	HASH			NO
 def	db_datadict_2	t3	0	db_datadict_2	PRIMARY	1	f1	NULL	0	NULL	NULL		HASH			NO
 SHOW GRANTS FOR 'testuser1'@'localhost';
@@ -298,8 +296,6 @@ SELECT * FROM information_schema.statistics
 WHERE table_schema LIKE 'db_datadict%'
 ORDER BY table_schema,table_name,index_name,seq_in_index,column_name;
 TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	NON_UNIQUE	INDEX_SCHEMA	INDEX_NAME	SEQ_IN_INDEX	COLUMN_NAME	COLLATION	CARDINALITY	SUB_PART	PACKED	NULLABLE	INDEX_TYPE	COMMENT	INDEX_COMMENT	IGNORED
-def	db_datadict_2	t3	1	db_datadict_2	f2f1_ind	1	f2	NULL	NULL	NULL	NULL	YES	HASH			NO
-def	db_datadict_2	t3	1	db_datadict_2	f2f1_ind	2	f1	NULL	0	NULL	NULL		HASH			NO
 def	db_datadict_2	t3	0	db_datadict_2	f5	1	f5	NULL	0	NULL	NULL	YES	HASH			NO
 def	db_datadict_2	t3	0	db_datadict_2	PRIMARY	1	f1	NULL	0	NULL	NULL		HASH			NO
 SHOW GRANTS FOR 'testuser1'@'localhost';

@@ -5,6 +5,7 @@ child2_2
 child2_3
 for child3
 for slave1_1
+include/start_slave.inc
 connection slave1_1;
 set @old_spider_slave_trx_isolation= @@spider_slave_trx_isolation;
 set global spider_slave_trx_isolation= 1;
@@ -40,6 +41,8 @@ CREATE TABLE tbl_a (
 pkey int NOT NULL,
 PRIMARY KEY (pkey)
 ) MASTER_1_ENGINE MASTER_1_CHARSET MASTER_1_COMMENT_2_1
+Warnings:
+Warning	138	Spider table params in COMMENT or CONNECTION strings have been deprecated and will be removed in a future release. Please use table options instead.
 connection master_1;
 INSERT INTO tbl_a (pkey) VALUES (0),(1),(2),(3),(4),(5),(6),(7),(8),(9);
 connection slave1_1;

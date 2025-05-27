@@ -26,6 +26,7 @@
 #include "log_event.h"                          /* Query_log_event */
 #include "sql_show.h"                           /* append_identifier */
 #include "sql_handler.h"                        /* mysql_ha_rm_temporary_tables */
+#include "sql_table.h"                          // generated_by_server
 #include "rpl_rli.h"                            /* rpl_group_info */
 
 #define IS_USER_TABLE(A) ((A->tmp_table == TRANSACTIONAL_TMP_TABLE) || \
@@ -45,6 +46,55 @@ bool THD::has_thd_temporary_tables()
   DBUG_RETURN(result);
 }
 
+/**
+   Check if there is any temporary tables that has not been logged to binary
+   log.
+
+   If this is the case then statement based binary logging is not safe.
+
+   @result 0  All temporary tables are logged. Statement and row based
+              replication are safe.
+   @result 1  Some temporary tables are not logged. Statement based replication
+              is not safe.
+*/
+
+bool THD::has_not_logged_temporary_tables()
+{
+  TABLE_SHARE *share;
+  if (temporary_tables)
+  {
+    All_tmp_tables_list::Iterator it(*temporary_tables);
+    while ((share= it++))
+    {
+      if (!share->using_binlog())
+        return 1;
+    }
+  }
+  return 0;
+}
+
+/**
+   Check if there is at least one temporary table that is logged to binary log.
+
+   @result 0  No temporary table changes are logged to binary log.
+   @result 1  At least one temporary table is logged to binary log.
+*/
+
+bool THD::has_logged_temporary_tables()
+{
+  TABLE_SHARE *share;
+  if (temporary_tables)
+  {
+    All_tmp_tables_list::Iterator it(*temporary_tables);
+    while ((share= it++))
+    {
+      if (share->using_binlog())
+        return 1;
+    }
+  }
+  return 0;
+}
+
 
 /**
   Create a temporary table, open it and return the TABLE handle.
@@ -59,8 +109,8 @@ bool THD::has_thd_temporary_tables()
 */
 TABLE *THD::create_and_open_tmp_table(LEX_CUSTRING *frm,
                                       const char *path,
-                                      const char *db,
-                                      const char *table_name,
+                                      const Lex_ident_db &db,
+                                      const Lex_ident_table &table_name,
                                       bool open_internal_tables)
 {
   DBUG_ENTER("THD::create_and_open_tmp_table");
@@ -112,8 +162,8 @@ TABLE *THD::create_and_open_tmp_table(LEX_CUSTRING *frm,
   @return Success                     Pointer to first used table instance.
           Failure                     NULL
 */
-TABLE *THD::find_temporary_table(const char *db,
-                                 const char *table_name,
+TABLE *THD::find_temporary_table(const Lex_ident_db &db,
+                                 const Lex_ident_table &table_name,
                                  Temporary_table_state state)
 {
   DBUG_ENTER("THD::find_temporary_table");
@@ -154,7 +204,8 @@ TABLE *THD::find_temporary_table(const TABLE_LIST *tl,
                                  Temporary_table_state state)
 {
   DBUG_ENTER("THD::find_temporary_table");
-  TABLE *table= find_temporary_table(tl->get_db_name(), tl->get_table_name(),
+  TABLE *table= find_temporary_table(tl->get_db_name(),
+                                     tl->get_table_name(),
                                      state);
   DBUG_RETURN(table);
 }
@@ -215,8 +266,8 @@ TMP_TABLE_SHARE *THD::find_tmp_table_share_w_base_key(const char *key,
   @return Success                     A pointer to table share object
           Failure                     NULL
 */
-TMP_TABLE_SHARE *THD::find_tmp_table_share(const char *db,
-                                           const char *table_name)
+TMP_TABLE_SHARE *THD::find_tmp_table_share(const Lex_ident_db &db,
+                                           const Lex_ident_table &table_name)
 {
   DBUG_ENTER("THD::find_tmp_table_share");
 
@@ -581,7 +632,8 @@ bool THD::rename_temporary_table(TABLE *table,
   /*
     Temporary tables are renamed by simply changing their table definition key.
   */
-  key_length= create_tmp_table_def_key(key, db->str, table_name->str);
+  key_length= create_tmp_table_def_key(key, Lex_ident_db(*db),
+                                            Lex_ident_table(*table_name));
   share->set_table_cache_key(key, key_length);
 
   DBUG_RETURN(false);
@@ -608,7 +660,7 @@ bool THD::rename_temporary_table(TABLE *table,
   @param is_trans [OUT]               Is set to the type of the table:
                                       transactional (e.g. innodb) as true or
                                       non-transactional (e.g. myisam) as false.
-  @paral delete_table [IN]            Whether to delete the table files?
+  @param delete_table [IN]            Whether to delete the table files?
 
   @return false                       Table was dropped
           true                        Error
@@ -792,6 +844,20 @@ void THD::mark_tmp_table_as_free_for_reuse(TABLE *table)
 
   DBUG_ASSERT(table->s->tmp_table);
 
+  /*
+    Ensure that table changes were either binary logged or the table
+    is marked as not up to date.
+  */
+  if (!tmp_table_binlog_handled &&            // Not logged to binlog
+      table->s->using_binlog() &&             // Table should be using binlog
+      table->file->mark_trx_read_write_done)  // Changes where done
+  {
+    /* We should only come here is binlog is not open */
+    DBUG_ASSERT(!mysql_bin_log.is_open());
+    /* Mark the table as not up to date */
+    table->mark_as_not_binlogged();
+  }
+
   table->query_id= 0;
   table->file->ha_reset();
 
@@ -917,13 +983,14 @@ bool THD::has_temporary_tables()
     4 bytes of master thread id
     4 bytes of pseudo thread id
 */
-uint THD::create_tmp_table_def_key(char *key, const char *db,
-                                    const char *table_name)
+uint THD::create_tmp_table_def_key(char *key,
+                                   const Lex_ident_db &db,
+                                   const Lex_ident_table &table_name)
 {
   uint key_length;
   DBUG_ENTER("THD::create_tmp_table_def_key");
 
-  key_length= tdc_create_key(key, db, table_name);
+  key_length= tdc_create_key(key, db.str, table_name.str);
   int4store(key + key_length, variables.server_id);
   int4store(key + key_length + 4, variables.pseudo_thread_id);
   key_length += TMP_TABLE_KEY_EXTRA;
@@ -945,8 +1012,8 @@ uint THD::create_tmp_table_def_key(char *key, const char *db,
 */
 TMP_TABLE_SHARE *THD::create_temporary_table(LEX_CUSTRING *frm,
                                              const char *path,
-                                             const char *db,
-                                             const char *table_name)
+                                             const Lex_ident_db &db,
+                                             const Lex_ident_table &table_name)
 {
   DBUG_ENTER("THD::create_temporary_table");
 
@@ -979,8 +1046,12 @@ TMP_TABLE_SHARE *THD::create_temporary_table(LEX_CUSTRING *frm,
   saved_key_cache= strmov(tmp_path, path) + 1;
   memcpy(saved_key_cache, key_cache, key_length);
 
+  /*
+    Temp tables can't be thread specific for slaves as they are freed
+    during cleanup() from Relay_log_info::close_temporary_tables()
+  */
   init_tmp_table_share(this, share, saved_key_cache, key_length,
-                       strend(saved_key_cache) + 1, tmp_path);
+                       strend(saved_key_cache) + 1, tmp_path, !slave_thread);
 
   /*
     Prefer using frm image over file. The image might not be available in
@@ -1086,7 +1157,7 @@ TABLE *THD::find_temporary_table(const char *key, uint key_length,
         share->all_tmp_tables.remove(table);
         free_temporary_table(table);
         if (share->all_tmp_tables.is_empty())
-          table= open_temporary_table(share, share->table_name.str);
+          table= open_temporary_table(share, share->table_name);
         else
         {
           it.rewind();
@@ -1119,10 +1190,9 @@ TABLE *THD::find_temporary_table(const char *key, uint key_length,
           Failure                     NULL
 */
 TABLE *THD::open_temporary_table(TMP_TABLE_SHARE *share,
-                                 const char *alias_arg)
+                                 const Lex_ident_table &alias)
 {
   TABLE *table;
-  LEX_CSTRING alias= {alias_arg, strlen(alias_arg) };
   DBUG_ENTER("THD::open_temporary_table");
 
 
@@ -1132,11 +1202,16 @@ TABLE *THD::open_temporary_table(TMP_TABLE_SHARE *share,
     DBUG_RETURN(NULL);                          /* Out of memory */
   }
 
+  uint flags= ha_open_options | (open_options & HA_OPEN_FOR_CREATE);
+  /*
+    In replication, temporary tables are not confined to a single
+    thread/THD.
+  */
+  if (slave_thread)
+    flags|= HA_OPEN_GLOBAL_TMP_TABLE;
   if (open_table_from_share(this, share, &alias,
                             (uint) HA_OPEN_KEYFILE,
-                            EXTRA_RECORD,
-                            (ha_open_options |
-                             (open_options & HA_OPEN_FOR_CREATE)),
+                            EXTRA_RECORD, flags,
                             table, false))
   {
     my_free(table);
@@ -1181,7 +1256,7 @@ bool THD::find_and_use_tmp_table(const TABLE_LIST *tl, TABLE **out_table)
   DBUG_ENTER("THD::find_and_use_tmp_table");
 
   key_length= create_tmp_table_def_key(key, tl->get_db_name(),
-                                        tl->get_table_name());
+                                       tl->get_table_name());
   result= use_temporary_table(find_temporary_table(key, key_length,
                                                    TMP_TABLE_NOT_IN_USE),
                               out_table);
@@ -1266,6 +1341,8 @@ void THD::close_temporary_table(TABLE *table)
   DBUG_VOID_RETURN;
 }
 
+static const char drop_table_stub[]= "DROP TEMPORARY TABLE IF EXISTS ";
+static const char rename_table_stub[]= "RENAME TABLE ";
 
 /**
   Write query log events with "DROP TEMPORARY TABLES .." for each pseudo
@@ -1288,11 +1365,10 @@ bool THD::log_events_and_free_tmp_shares()
   bool error= false;
   bool found_user_tables= false;
   // Better add "IF EXISTS" in case a RESET MASTER has been done.
-  const char stub[]= "DROP /*!40005 TEMPORARY */ TABLE IF EXISTS ";
   char buf[FN_REFLEN];
 
   String s_query(buf, sizeof(buf), system_charset_info);
-  s_query.copy(stub, sizeof(stub) - 1, system_charset_info);
+  s_query.copy(drop_table_stub, sizeof(drop_table_stub) - 1, system_charset_info);
 
   /*
     Insertion sort of temporary tables by pseudo_thread_id to build ordered
@@ -1372,7 +1448,7 @@ bool THD::log_events_and_free_tmp_shares()
       /*
         Reset s_query() if changed by previous loop.
       */
-      s_query.length(sizeof(stub) - 1);
+      s_query.length(sizeof(drop_table_stub) - 1);
 
       /*
         Loop forward through all tables that belong to a common database
@@ -1409,9 +1485,11 @@ bool THD::log_events_and_free_tmp_shares()
         variables.character_set_client= system_charset_info;
         used|= THREAD_SPECIFIC_USED;
 
-        Query_log_event qinfo(this, s_query.ptr(),
-            s_query.length() - 1 /* to remove trailing ',' */,
-            false, true, false, 0);
+        s_query.length(s_query.length()-1);      // remove trailing ','
+        s_query.append(&generated_by_server);
+
+        Query_log_event qinfo(this, s_query.ptr(), s_query.length(),
+                              false, true, false, 0);
         qinfo.db= db.ptr();
         qinfo.db_len= db.length();
         variables.character_set_client= cs_save;
@@ -1462,6 +1540,54 @@ bool THD::log_events_and_free_tmp_shares()
 }
 
 
+/*
+  Log drop of renamed temporary table to binary log
+
+  This function is only called by mysql_rename_table() if of there was
+  a rename of temporary table that was not in the binary log. These
+  tables are removed from the rename list.
+
+  Note that find_temporary_table_for_rename() has ensured that all
+  elements in table_list points to the same temporary table even
+  if the table exists in several places in the rename list.
+*/
+
+bool THD::binlog_renamed_tmp_tables(TABLE_LIST *table_list)
+{
+  TABLE_LIST *old_table, *new_table;
+  char buf[FN_REFLEN];
+  String rename_query(buf, sizeof(buf), system_charset_info);
+  bool res= 0;
+  DBUG_ENTER("binlog_rename_of_changed_tmp_tables_to_binlog");
+
+  rename_query.copy(rename_table_stub, sizeof(rename_table_stub) - 1,
+                     system_charset_info);
+
+  for (old_table= table_list; old_table; old_table= new_table->next_local)
+  {
+    new_table= old_table->next_local;
+    if (!old_table->table ||                            // Normal table
+        old_table->table->s->table_creation_was_logged) // Normal or logged tmp
+    {
+      append_identifier(this, &rename_query, &old_table->db);
+      rename_query.append('.');
+      append_identifier(this, &rename_query, &old_table->table_name);
+      rename_query.append(" TO ", 4);
+      append_identifier(this, &rename_query, &new_table->db);
+      rename_query.append('.');
+      append_identifier(this, &rename_query, &new_table->table_name);
+      rename_query.append(',');
+    }
+  }
+  if (rename_query.length() > sizeof(rename_table_stub))
+  {
+    rename_query.length(rename_query.length()-1);
+    rename_query.append(generated_by_server);
+    res= write_bin_log(this, FALSE, rename_query.ptr(), rename_query.length());
+  }
+  DBUG_RETURN(res);
+}
+
 /**
   Delete the files and free the specified table share.
 
@@ -1479,6 +1605,13 @@ bool THD::free_tmp_table_share(TMP_TABLE_SHARE *share, bool delete_table)
   if (delete_table)
   {
     error= rm_temporary_table(share->db_type(), share->path.str);
+
+    if (share->hlindexes())
+    {
+      /* as of now: only one vector index can be here */
+      DBUG_ASSERT(share->hlindexes() == 1);
+      rm_temporary_table(share->hlindex->db_type(), share->hlindex->path.str);
+    }
   }
   free_table_share(share);
   my_free(share);
@@ -1592,6 +1725,11 @@ void THD::close_unused_temporary_table_instances(const TABLE_LIST *tl)
        {
          /* Note: removing current list element doesn't invalidate iterator. */
          share->all_tmp_tables.remove(table);
+         /*
+           At least one instance should be left (guaranteed by calling this
+           function for table which is opened and the table is under processing)
+         */
+         DBUG_ASSERT(share->all_tmp_tables.front());
          free_temporary_table(table);
        }
      }

@@ -49,7 +49,7 @@ INSERT INTO t2 SELECT * FROM t1;
 CREATE TABLE t3 LIKE t1;
 INSERT INTO t3 SELECT * FROM t1;
 # Should not crash.
-# Should have 1 impossible where and 2 dependent subqs.
+# Should have 1 impossible where and 2 dependent subqueries.
 EXPLAIN
 SELECT
 (SELECT 1 FROM t1,t2 WHERE t2.b > t3.b)
@@ -309,8 +309,8 @@ pk	i
 0	10
 2	30
 3	40
-SELECT (NULL, 1) NOT IN (SELECT t2a.i, t2a.pk FROM t2a WHERE t2a.pk = t1.pk) from t1;
-(NULL, 1) NOT IN (SELECT t2a.i, t2a.pk FROM t2a WHERE t2a.pk = t1.pk)
+SELECT (NULL, 1) NOT IN (SELECT t2a.i, t2a.pk FROM t2a WHERE t2a.pk = t1.pk) as exp from t1;
+exp
 1
 NULL
 1
@@ -325,8 +325,8 @@ pk	i
 0	10
 2	30
 3	40
-SELECT (NULL, 1) NOT IN (SELECT t2b.i, t2b.pk FROM t2b WHERE t2b.pk = t1.pk) from t1;
-(NULL, 1) NOT IN (SELECT t2b.i, t2b.pk FROM t2b WHERE t2b.pk = t1.pk)
+SELECT (NULL, 1) NOT IN (SELECT t2b.i, t2b.pk FROM t2b WHERE t2b.pk = t1.pk) as exp from t1;
+exp
 1
 NULL
 1
@@ -341,8 +341,8 @@ pk	i
 0	10
 2	30
 3	40
-SELECT (NULL, 1) NOT IN (SELECT t2c.i, t2c.pk FROM t2c WHERE t2c.pk = t1.pk) from t1;
-(NULL, 1) NOT IN (SELECT t2c.i, t2c.pk FROM t2c WHERE t2c.pk = t1.pk)
+SELECT (NULL, 1) NOT IN (SELECT t2c.i, t2c.pk FROM t2c WHERE t2c.pk = t1.pk) as exp from t1;
+exp
 1
 NULL
 1
@@ -357,8 +357,8 @@ pk	i
 0	10
 2	30
 3	40
-SELECT (NULL, 1) NOT IN (SELECT t2d.i, t2d.pk FROM t2d WHERE t2d.pk = t1.pk) from t1;
-(NULL, 1) NOT IN (SELECT t2d.i, t2d.pk FROM t2d WHERE t2d.pk = t1.pk)
+SELECT (NULL, 1) NOT IN (SELECT t2d.i, t2d.pk FROM t2d WHERE t2d.pk = t1.pk) as exp from t1;
+exp
 1
 NULL
 1
@@ -422,17 +422,17 @@ CREATE TABLE t1
 (EMPNUM   CHAR(3) NOT NULL,
 EMPNAME  CHAR(20),
 GRADE    DECIMAL(4),
-CITY     CHAR(15));
+CITY     CHAR(15)) CHARSET=latin1;
 CREATE TABLE t2
 (PNUM     CHAR(3) NOT NULL,
 PNAME    CHAR(20),
 PTYPE    CHAR(6),
 BUDGET   DECIMAL(9),
-CITY     CHAR(15));
+CITY     CHAR(15)) CHARSET=latin1;
 CREATE TABLE t3
 (EMPNUM   CHAR(3) NOT NULL,
 PNUM     CHAR(3) NOT NULL,
-HOURS    DECIMAL(5));
+HOURS    DECIMAL(5)) CHARSET=latin1;
 INSERT INTO t1 VALUES ('E1','Alice',12,'Deale');
 INSERT INTO t1 VALUES ('E2','Betty',10,'Vienna');
 INSERT INTO t1 VALUES ('E3','Carmen',13,'Vienna');
@@ -1220,12 +1220,12 @@ drop table t1, t2;
 #
 # LP BUG#641203 Query returns rows where no result is expected (impossible WHERE)
 #
-CREATE TABLE t1 (c1 varchar(1) DEFAULT NULL);
-CREATE TABLE t2 (c1 varchar(1) DEFAULT NULL);
+CREATE TABLE t1 (c1 varchar(1) DEFAULT NULL) CHARSET=latin1;
+CREATE TABLE t2 (c1 varchar(1) DEFAULT NULL) CHARSET=latin1;
 INSERT INTO t2 VALUES ('k'), ('d'),('x');
-CREATE TABLE t3 (c1 varchar(1) DEFAULT NULL);
+CREATE TABLE t3 (c1 varchar(1) DEFAULT NULL) CHARSET=latin1;
 INSERT INTO t3 VALUES ('a'), ('b'), ('c');
-CREATE TABLE t4 (c1 varchar(1) primary key);
+CREATE TABLE t4 (c1 varchar(1) primary key) CHARSET=latin1;
 INSERT INTO t4 VALUES ('k'), ('d');
 SET @save_optimizer_switch=@@optimizer_switch;
 SET optimizer_switch='outer_join_with_cache=off';
@@ -1649,7 +1649,7 @@ WHERE ( alias2.f1 , alias2.f2 ) IN ( SELECT max(f2) , f1 FROM t0 GROUP BY f2 , f
 f1	f2
 8	8
 Warnings:
-Warning	1292	Truncated incorrect DECIMAL value: 'u'
+Warning	1292	Truncated incorrect BOOLEAN value: 'u'
 EXPLAIN
 SELECT * FROM t2 WHERE (f1b, f2b) IN (SELECT max(f1a), f2a FROM t1 GROUP BY f1a, f2a);
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
@@ -1683,7 +1683,7 @@ WHERE ( alias2.f1 , alias2.f2 ) IN ( SELECT max(f2) , f1 FROM t0 GROUP BY f2 , f
 f1	f2
 8	8
 Warnings:
-Warning	1292	Truncated incorrect DECIMAL value: 'u'
+Warning	1292	Truncated incorrect BOOLEAN value: 'u'
 EXPLAIN
 SELECT * FROM t2 WHERE (f1b, f2b) IN (SELECT max(f1a), f2a FROM t1 GROUP BY f1a, f2a);
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
@@ -1731,7 +1731,7 @@ CREATE TABLE t3 ( f1 int NOT NULL , f2 int) ;
 INSERT INTO t3 VALUES (0,0), (0,0);
 EXPLAIN SELECT STRAIGHT_JOIN (
 SELECT f2 FROM t1 WHERE ( f2 ) IN ( SELECT t3.f2 FROM t3 JOIN t2 ON t2.f1 = 1 )
-);
+) as exp;
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
 1	PRIMARY	NULL	NULL	NULL	NULL	NULL	NULL	NULL	No tables used
 2	SUBQUERY	t1	ALL	NULL	NULL	NULL	NULL	2	Using where
@@ -1739,10 +1739,8 @@ id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
 3	DEPENDENT SUBQUERY	t2	ALL	NULL	NULL	NULL	NULL	2	Using where; Using join buffer (flat, BNL join)
 SELECT STRAIGHT_JOIN (
 SELECT f2 FROM t1 WHERE ( f2 ) IN ( SELECT t3.f2 FROM t3 JOIN t2 ON t2.f1 = 1 )
-);
-(
-SELECT f2 FROM t1 WHERE ( f2 ) IN ( SELECT t3.f2 FROM t3 JOIN t2 ON t2.f1 = 1 )
-)
+) as exp;
+exp
 NULL
 drop table t1, t2, t3;
 #                                                                                                                                                     
@@ -1866,6 +1864,8 @@ id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
 2	SUBQUERY	SUBQUERY2_t1	index	NULL	col_int_key	5	NULL	2	Using index
 2	SUBQUERY	SUBQUERY2_t2	ALL	col_varchar_key	NULL	NULL	NULL	2	Using where; Using join buffer (flat, BNL join)
 3	MATERIALIZED	t1	ALL	NULL	NULL	NULL	NULL	2	
+Warnings:
+Note	1105	Cannot use key `col_varchar_key` part[0] for lookup: `test`.`t1`.`col_varchar_key` of type `varchar` < "0" of type `bigint`
 SELECT col_int_key
 FROM t2
 WHERE (SELECT SUBQUERY2_t1.col_int_key
@@ -1875,8 +1875,8 @@ WHERE SUBQUERY2_t2.col_varchar_nokey IN
 (SELECT col_varchar_nokey FROM t1 GROUP BY col_varchar_nokey));
 col_int_key
 Warnings:
-Warning	1292	Truncated incorrect DECIMAL value: 'v'
-Warning	1292	Truncated incorrect DECIMAL value: 'r'
+Warning	1292	Truncated incorrect BOOLEAN value: 'v'
+Warning	1292	Truncated incorrect BOOLEAN value: 'r'
 set @@optimizer_switch='subquery_cache=off,materialization=off,in_to_exists=on,semijoin=off';
 EXPLAIN
 SELECT col_int_key
@@ -1891,6 +1891,8 @@ id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
 2	SUBQUERY	SUBQUERY2_t1	index	NULL	col_int_key	5	NULL	2	Using index
 2	SUBQUERY	SUBQUERY2_t2	ALL	col_varchar_key	NULL	NULL	NULL	2	Using where; Using join buffer (flat, BNL join)
 3	DEPENDENT SUBQUERY	t1	ALL	NULL	NULL	NULL	NULL	2	Using where
+Warnings:
+Note	1105	Cannot use key `col_varchar_key` part[0] for lookup: `test`.`t1`.`col_varchar_key` of type `varchar` < "0" of type `bigint`
 SELECT col_int_key
 FROM t2
 WHERE (SELECT SUBQUERY2_t1.col_int_key
@@ -1900,8 +1902,8 @@ WHERE SUBQUERY2_t2.col_varchar_nokey IN
 (SELECT col_varchar_nokey FROM t1 GROUP BY col_varchar_nokey));
 col_int_key
 Warnings:
-Warning	1292	Truncated incorrect DECIMAL value: 'v'
-Warning	1292	Truncated incorrect DECIMAL value: 'r'
+Warning	1292	Truncated incorrect BOOLEAN value: 'v'
+Warning	1292	Truncated incorrect BOOLEAN value: 'r'
 drop table t1, t2;
 set @@optimizer_switch = @old_optimizer_switch;
 #
@@ -2543,7 +2545,7 @@ DROP TABLE t1,t2;
 #
 # MDEV-17606: Query returns wrong results (while using CHARACTER SET utf8)
 #
-CREATE TABLE t1(l1 varchar(10), i2 int);
+CREATE TABLE t1(l1 varchar(10), i2 int) CHARSET=latin1;
 INSERT INTO t1 VALUES ('e',2),('o',6),('x',4);
 CREATE TABLE t2 (v1 varchar(10) CHARACTER SET utf8, KEY v1 (v1(3)));
 INSERT INTO t2 VALUES  ('k'),('rid'),('f'),('x');
@@ -2630,8 +2632,8 @@ SET @save_optimizer_switch=@@optimizer_switch;
 SET optimizer_switch='subquery_cache=off';
 CREATE TABLE t1 (a INT,b INT);
 INSERT INTO t1 VALUES (0,0),(0,0);
-SELECT (SELECT DISTINCT t1i.b FROM t1 t1i GROUP BY t1i.a ORDER BY MAX(t1o.b)) FROM t1 AS t1o;
-(SELECT DISTINCT t1i.b FROM t1 t1i GROUP BY t1i.a ORDER BY MAX(t1o.b))
+SELECT (SELECT DISTINCT t1i.b FROM t1 t1i GROUP BY t1i.a ORDER BY MAX(t1o.b)) as exp FROM t1 AS t1o;
+exp
 0
 SET @@optimizer_switch= @save_optimizer_switch;
 DROP TABLE t1;
@@ -2666,7 +2668,7 @@ DROP TABLE t1, t2;
 CREATE TABLE t1(a INT, b INT);
 INSERT INTO t1 VALUES (1,1), (2,2), (3,3), (4,4), (5,5);
 SELECT a, b FROM t1 WHERE a IN (SELECT A.a FROM t1 A GROUP BY s.id);
-ERROR 42S22: Unknown column 's.id' in 'group statement'
+ERROR 42S22: Unknown column 's.id' in 'GROUP BY'
 DROP TABLE t1;
 #
 # MDEV-24519: Server crashes in Charset::set_charset upon SELECT
@@ -2707,15 +2709,15 @@ drop table t1;
 #
 # MDEV-18335: Assertion `!error || error == 137' failed in subselect_rowid_merge_engine::init
 #
-CREATE TABLE t1 (i1 int,v1 varchar(1),KEY (v1,i1));
+CREATE TABLE t1 (i1 int,v1 varchar(1),KEY (v1,i1)) CHARSET=latin1;
 INSERT INTO t1 VALUES
 (9,'y'),(4,'q'),(0,null),(0,'p'),(null,'j');
 CREATE TABLE t2 (pk int);
 INSERT INTO t2 VALUES (1),(2);
-CREATE TABLE t3 (v2 varchar(1));
+CREATE TABLE t3 (v2 varchar(1)) CHARSET=latin1;
 INSERT INTO t3 VALUES
 ('p'),('j'),('y'),('q');
-CREATE TABLE t4 (v2 varchar(1));
+CREATE TABLE t4 (v2 varchar(1)) CHARSET=latin1;
 INSERT INTO t4 VALUES
 ('a'),('a'),('b'),('b'),('c'),('c'),
 ('d'),('d'),('e'),('e'),('f'),('f'),
@@ -2762,9 +2764,9 @@ EXPLAIN
 SELECT * FROM t1 WHERE (t1.a,t1.b) IN (('abx',1),('def',2), ('abc', 3));
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
 1	SIMPLE	t1	ALL	NULL	NULL	NULL	NULL	5	Using where
-set names 'utf8';
+set names utf8 collate utf8_general_ci;
 #
-# IN predicate to IN subquery is performed as materialization is llowed
+# IN predicate to IN subquery is performed as materialization is allowed
 # The character set on the inner side is a proper subset of the outer side
 #
 # this test in 10.5 has only 2 rows in the IN predicate
@@ -2792,17 +2794,8 @@ WHERE t1_outer.id <> id
 FROM
 t1 AS t1_outer
 GROUP BY f
-);
-1 IN (
-SELECT
-(SELECT COUNT(id)
-FROM t1
-WHERE t1_outer.id <> id
-) AS f
-FROM
-t1 AS t1_outer
-GROUP BY f
-)
+) as exp;
+exp
 1
 SELECT
 1 IN (
@@ -2814,17 +2807,8 @@ WHERE t1_outer.id <> id
 FROM
 t1 AS t1_outer
 GROUP BY 1
-);
-1 IN (
-SELECT
-(SELECT COUNT(id)
-FROM t1
-WHERE t1_outer.id <> id
-) AS f
-FROM
-t1 AS t1_outer
-GROUP BY 1
-)
+) as exp;
+exp
 1
 DROP TABLE t1;
 #
@@ -2855,20 +2839,20 @@ CREATE TABLE t1 (
 key1 varchar(30) NOT NULL,
 col1 int(11) NOT NULL,
 filler char(100)
-);
+) CHARSET=latin1;
 insert into t1 select seq, seq, seq from seq_1_to_100;
 CREATE TABLE t10 (
 key1 varchar(30) NOT NULL,
 col1 int,
 filler char(100),
 PRIMARY KEY (key1)
-);
+) CHARSET=latin1;
 insert into t10 select seq, seq, seq from seq_1_to_1000;
 CREATE TABLE t11 (
 key1 varchar(30) NOT NULL,
 filler char(100),
 PRIMARY KEY (key1)
-);
+) CHARSET=latin1;
 insert into t11 select seq, seq from seq_1_to_1000;
 set @tmp_os=@@optimizer_switch;
 set optimizer_switch='semijoin=off,materialization=off';
@@ -2921,6 +2905,7 @@ ANALYZE
               "r_other_time_ms": "REPLACED",
               "r_engine_stats": REPLACED,
               "filtered": 100,
+              "r_total_filtered": 100,
               "r_filtered": 100
             }
           }
@@ -2949,8 +2934,9 @@ ANALYZE
                       "r_other_time_ms": "REPLACED",
                       "r_engine_stats": REPLACED,
                       "filtered": 100,
-                      "r_filtered": 50,
-                      "attached_condition": "<nop>(<in_optimizer>(t1.b,(subquery#3) >= 4))"
+                      "r_total_filtered": 50,
+                      "attached_condition": "<nop>(<in_optimizer>(t1.b,(subquery#3) >= 4))",
+                      "r_filtered": 50
                     }
                   }
                 ],
@@ -2975,6 +2961,7 @@ ANALYZE
                             "r_other_time_ms": "REPLACED",
                             "r_engine_stats": REPLACED,
                             "filtered": 100,
+                            "r_total_filtered": 100,
                             "r_filtered": 100
                           }
                         }
@@ -3006,34 +2993,31 @@ where a >= any (select b from t2 group by (select c from t3 where c = 1));
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
 1	PRIMARY	t1	ALL	NULL	NULL	NULL	NULL	3	100.00	Using where
 2	SUBQUERY	t2	ALL	NULL	NULL	NULL	NULL	2	100.00	
+3	SUBQUERY	t3	ALL	NULL	NULL	NULL	NULL	2	100.00	Using where
 Warnings:
-Note	1003	/* select#1 */ select `test`.`t1`.`a` AS `a` from `test`.`t1` where <nop>(<in_optimizer>(`test`.`t1`.`a`,(/* select#2 */ select min(`test`.`t2`.`b`) from `test`.`t2`) <= <cache>(`test`.`t1`.`a`)))
+Note	1003	/* select#1 */ select `test`.`t1`.`a` AS `a` from `test`.`t1` where <nop>(<in_optimizer>(`test`.`t1`.`a`,<min>(/* select#2 */ select `test`.`t2`.`b` from `test`.`t2` group by (/* select#3 */ select `test`.`t3`.`c` from `test`.`t3` where `test`.`t3`.`c` = 1)) <= <cache>(`test`.`t1`.`a`)))
 select a from t1
 where a >= any (select b from t2 group by (select c from t3 where c = 1));
 a
-3
-2
 prepare stmt from "select a from t1
 where a >= any (select b from t2 group by (select c from t3 where c = 1))";
 execute stmt;
 a
-3
-2
 execute stmt;
 a
-3
-2
 deallocate prepare stmt;
 explain extended select a from t1
 where a <= all (select b from t2 group by (select c from t3 where c = 1));
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
 1	PRIMARY	t1	ALL	NULL	NULL	NULL	NULL	3	100.00	Using where
 2	SUBQUERY	t2	ALL	NULL	NULL	NULL	NULL	2	100.00	
+3	SUBQUERY	t3	ALL	NULL	NULL	NULL	NULL	2	100.00	Using where
 Warnings:
-Note	1003	/* select#1 */ select `test`.`t1`.`a` AS `a` from `test`.`t1` where <not>(<in_optimizer>(`test`.`t1`.`a`,(/* select#2 */ select min(`test`.`t2`.`b`) from `test`.`t2`) < <cache>(`test`.`t1`.`a`)))
+Note	1003	/* select#1 */ select `test`.`t1`.`a` AS `a` from `test`.`t1` where <not>(<in_optimizer>(`test`.`t1`.`a`,<min>(/* select#2 */ select `test`.`t2`.`b` from `test`.`t2` group by (/* select#3 */ select `test`.`t3`.`c` from `test`.`t3` where `test`.`t3`.`c` = 1)) < <cache>(`test`.`t1`.`a`)))
 select a from t1
 where a <= all (select b from t2 group by (select c from t3 where c = 1));
 a
+3
 1
 2
 explain extended select a from t1
@@ -3041,13 +3025,12 @@ where a >= any (select b from t2 group by 1 + (select c from t3 where c = 1));
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
 1	PRIMARY	t1	ALL	NULL	NULL	NULL	NULL	3	100.00	Using where
 2	SUBQUERY	t2	ALL	NULL	NULL	NULL	NULL	2	100.00	
+3	SUBQUERY	t3	ALL	NULL	NULL	NULL	NULL	2	100.00	Using where
 Warnings:
-Note	1003	/* select#1 */ select `test`.`t1`.`a` AS `a` from `test`.`t1` where <nop>(<in_optimizer>(`test`.`t1`.`a`,(/* select#2 */ select min(`test`.`t2`.`b`) from `test`.`t2`) <= <cache>(`test`.`t1`.`a`)))
+Note	1003	/* select#1 */ select `test`.`t1`.`a` AS `a` from `test`.`t1` where <nop>(<in_optimizer>(`test`.`t1`.`a`,<min>(/* select#2 */ select `test`.`t2`.`b` from `test`.`t2` group by 1 + (/* select#3 */ select `test`.`t3`.`c` from `test`.`t3` where `test`.`t3`.`c` = 1)) <= <cache>(`test`.`t1`.`a`)))
 select a from t1
 where a >= any (select b from t2 group by 1 + (select c from t3 where c = 1));
 a
-3
-2
 drop table t1,t2,t3;
 #
 # MDEV-29139: Redundant IN/ALL/ANY predicand in GROUP BY clause of
@@ -3067,8 +3050,10 @@ group by (select a from t1 where a = 1) in (select d from t4));
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
 1	PRIMARY	t2	ALL	NULL	NULL	NULL	NULL	2	100.00	
 2	SUBQUERY	t3	ALL	NULL	NULL	NULL	NULL	2	100.00	
+4	SUBQUERY	t4	ALL	NULL	NULL	NULL	NULL	2	100.00	Using where
+3	SUBQUERY	t1	ALL	NULL	NULL	NULL	NULL	2	100.00	Using where
 Warnings:
-Note	1003	/* select#1 */ select `test`.`t2`.`b` AS `b` from `test`.`t2` where 1
+Note	1003	/* select#1 */ select `test`.`t2`.`b` AS `b` from `test`.`t2` where <in_optimizer>(1,exists(/* select#2 */ select `test`.`t3`.`c` from `test`.`t3` group by <in_optimizer>((/* select#3 */ select `test`.`t1`.`a` from `test`.`t1` where `test`.`t1`.`a` = 1),<exists>(/* select#4 */ select `test`.`t4`.`d` from `test`.`t4` where trigcond(<cache>((/* select#3 */ select `test`.`t1`.`a` from `test`.`t1` where `test`.`t1`.`a` = 1)) = `test`.`t4`.`d` or `test`.`t4`.`d` is null) having trigcond(`test`.`t4`.`d` is null))) limit 1))
 select b from t2
 where exists (select c from t3
 group by (select a from t1 where a = 1) in (select d from t4));
@@ -3094,8 +3079,10 @@ any (select d from t4));
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
 1	PRIMARY	t2	ALL	NULL	NULL	NULL	NULL	2	100.00	
 2	SUBQUERY	t3	ALL	NULL	NULL	NULL	NULL	2	100.00	
+4	SUBQUERY	t4	ALL	NULL	NULL	NULL	NULL	2	100.00	Using where
+3	SUBQUERY	t1	ALL	NULL	NULL	NULL	NULL	2	100.00	Using where
 Warnings:
-Note	1003	/* select#1 */ select `test`.`t2`.`b` AS `b` from `test`.`t2` where 1
+Note	1003	/* select#1 */ select `test`.`t2`.`b` AS `b` from `test`.`t2` where <in_optimizer>(1,exists(/* select#2 */ select `test`.`t3`.`c` from `test`.`t3` group by <nop>(<expr_cache><(/* select#3 */ select `test`.`t1`.`a` from `test`.`t1` where `test`.`t1`.`a` = 1)>(<in_optimizer>((/* select#3 */ select `test`.`t1`.`a` from `test`.`t1` where `test`.`t1`.`a` = 1),<exists>(/* select#4 */ select `test`.`t4`.`d` from `test`.`t4` where trigcond(<cache>((/* select#3 */ select `test`.`t1`.`a` from `test`.`t1` where `test`.`t1`.`a` = 1)) >= `test`.`t4`.`d` or `test`.`t4`.`d` is null) having trigcond(`test`.`t4`.`d` is null))))) limit 1))
 select b from t2
 where exists (select c from t3
 group by (select a from t1 where a = 1) >=
@@ -3110,8 +3097,10 @@ all (select d from t4));
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
 1	PRIMARY	t2	ALL	NULL	NULL	NULL	NULL	2	100.00	
 2	SUBQUERY	t3	ALL	NULL	NULL	NULL	NULL	2	100.00	
+4	SUBQUERY	t4	ALL	NULL	NULL	NULL	NULL	2	100.00	Using where
+3	SUBQUERY	t1	ALL	NULL	NULL	NULL	NULL	2	100.00	Using where
 Warnings:
-Note	1003	/* select#1 */ select `test`.`t2`.`b` AS `b` from `test`.`t2` where 1
+Note	1003	/* select#1 */ select `test`.`t2`.`b` AS `b` from `test`.`t2` where <in_optimizer>(1,exists(/* select#2 */ select `test`.`t3`.`c` from `test`.`t3` group by <not>(<expr_cache><(/* select#3 */ select `test`.`t1`.`a` from `test`.`t1` where `test`.`t1`.`a` = 1)>(<in_optimizer>((/* select#3 */ select `test`.`t1`.`a` from `test`.`t1` where `test`.`t1`.`a` = 1),<exists>(/* select#4 */ select `test`.`t4`.`d` from `test`.`t4` where trigcond(<cache>((/* select#3 */ select `test`.`t1`.`a` from `test`.`t1` where `test`.`t1`.`a` = 1)) >= `test`.`t4`.`d` or `test`.`t4`.`d` is null) having trigcond(`test`.`t4`.`d` is null))))) limit 1))
 select b from t2
 where exists (select c from t3
 group by (select a from t1 where a = 1) <
@@ -3123,15 +3112,17 @@ explain extended select b from t2
 where b in (select c from t3
 group by (select a from t1 where a = 1) in (select d from t4));
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
-1	PRIMARY	t2	ALL	NULL	NULL	NULL	NULL	2	100.00	
-1	PRIMARY	t3	ALL	NULL	NULL	NULL	NULL	2	50.00	Using where; FirstMatch(t2); Using join buffer (flat, BNL join)
+1	PRIMARY	t2	ALL	NULL	NULL	NULL	NULL	2	100.00	Using where
+1	PRIMARY	<subquery2>	eq_ref	distinct_key	distinct_key	4	test.t2.b	1	100.00	
+2	MATERIALIZED	t3	ALL	NULL	NULL	NULL	NULL	2	100.00	
+4	SUBQUERY	t4	ALL	NULL	NULL	NULL	NULL	2	100.00	Using where
+3	SUBQUERY	t1	ALL	NULL	NULL	NULL	NULL	2	100.00	Using where
 Warnings:
-Note	1003	select `test`.`t2`.`b` AS `b` from `test`.`t2` semi join (`test`.`t3`) where `test`.`t3`.`c` = `test`.`t2`.`b`
+Note	1003	/* select#1 */ select `test`.`t2`.`b` AS `b` from  <materialize> (/* select#2 */ select `test`.`t3`.`c` from `test`.`t3` group by <in_optimizer>((/* select#3 */ select `test`.`t1`.`a` from `test`.`t1` where `test`.`t1`.`a` = 1),<exists>(/* select#4 */ select `test`.`t4`.`d` from `test`.`t4` where trigcond(<cache>((/* select#3 */ select `test`.`t1`.`a` from `test`.`t1` where `test`.`t1`.`a` = 1)) = `test`.`t4`.`d` or `test`.`t4`.`d` is null) having trigcond(`test`.`t4`.`d` is null)))) join `test`.`t2` where `<subquery2>`.`c` = `test`.`t2`.`b`
 select b from t2
 where b in (select c from t3
 group by (select a from t1 where a = 1) in (select d from t4));
 b
-2
 explain extended select b from t2
 where b >= any (select c from t3
 group by (select a from t1 where a = 1) in
@@ -3139,29 +3130,32 @@ group by (select a from t1 where a = 1) in
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
 1	PRIMARY	t2	ALL	NULL	NULL	NULL	NULL	2	100.00	Using where
 2	SUBQUERY	t3	ALL	NULL	NULL	NULL	NULL	2	100.00	
+4	SUBQUERY	t4	ALL	NULL	NULL	NULL	NULL	2	100.00	Using where
+3	SUBQUERY	t1	ALL	NULL	NULL	NULL	NULL	2	100.00	Using where
 Warnings:
-Note	1003	/* select#1 */ select `test`.`t2`.`b` AS `b` from `test`.`t2` where <nop>(<in_optimizer>(`test`.`t2`.`b`,(/* select#2 */ select min(`test`.`t3`.`c`) from `test`.`t3`) <= <cache>(`test`.`t2`.`b`)))
+Note	1003	/* select#1 */ select `test`.`t2`.`b` AS `b` from `test`.`t2` where <nop>(<in_optimizer>(`test`.`t2`.`b`,<min>(/* select#2 */ select `test`.`t3`.`c` from `test`.`t3` group by <in_optimizer>((/* select#3 */ select `test`.`t1`.`a` from `test`.`t1` where `test`.`t1`.`a` = 1),<exists>(/* select#4 */ select `test`.`t4`.`d` from `test`.`t4` where trigcond(<cache>((/* select#3 */ select `test`.`t1`.`a` from `test`.`t1` where `test`.`t1`.`a` = 1)) = `test`.`t4`.`d` or `test`.`t4`.`d` is null) having trigcond(`test`.`t4`.`d` is null)))) <= <cache>(`test`.`t2`.`b`)))
 select b from t2
 where b >= any (select c from t3
+group by (select a from t1 where a = 1) in
+(select d from t4));
+b
+explain extended select b from t2
+where b <= all (select c from t3
+group by (select a from t1 where a = 1) in
+(select d from t4));
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	PRIMARY	t2	ALL	NULL	NULL	NULL	NULL	2	100.00	Using where
+2	SUBQUERY	t3	ALL	NULL	NULL	NULL	NULL	2	100.00	
+4	SUBQUERY	t4	ALL	NULL	NULL	NULL	NULL	2	100.00	Using where
+3	SUBQUERY	t1	ALL	NULL	NULL	NULL	NULL	2	100.00	Using where
+Warnings:
+Note	1003	/* select#1 */ select `test`.`t2`.`b` AS `b` from `test`.`t2` where <not>(<in_optimizer>(`test`.`t2`.`b`,<min>(/* select#2 */ select `test`.`t3`.`c` from `test`.`t3` group by <in_optimizer>((/* select#3 */ select `test`.`t1`.`a` from `test`.`t1` where `test`.`t1`.`a` = 1),<exists>(/* select#4 */ select `test`.`t4`.`d` from `test`.`t4` where trigcond(<cache>((/* select#3 */ select `test`.`t1`.`a` from `test`.`t1` where `test`.`t1`.`a` = 1)) = `test`.`t4`.`d` or `test`.`t4`.`d` is null) having trigcond(`test`.`t4`.`d` is null)))) < <cache>(`test`.`t2`.`b`)))
+select b from t2
+where b <= all (select c from t3
 group by (select a from t1 where a = 1) in
 (select d from t4));
 b
 3
-2
-explain extended select b from t2
-where b <= all (select c from t3
-group by (select a from t1 where a = 1) in
-(select d from t4));
-id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
-1	PRIMARY	t2	ALL	NULL	NULL	NULL	NULL	2	100.00	Using where
-2	SUBQUERY	t3	ALL	NULL	NULL	NULL	NULL	2	100.00	
-Warnings:
-Note	1003	/* select#1 */ select `test`.`t2`.`b` AS `b` from `test`.`t2` where <not>(<in_optimizer>(`test`.`t2`.`b`,<min>(/* select#2 */ select `test`.`t3`.`c` from `test`.`t3`) < <cache>(`test`.`t2`.`b`)))
-select b from t2
-where b <= all (select c from t3
-group by (select a from t1 where a = 1) in
-(select d from t4));
-b
 2
 drop table t1,t2,t3,t4;
 # End of 10.3 tests
@@ -3213,4 +3207,163 @@ id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
 1	PRIMARY	<subquery2>	eq_ref	distinct_key	distinct_key	4	func	1	
 2	MATERIALIZED	t2	ALL	NULL	NULL	NULL	NULL	100	
 drop table t0, t1, t2;
+#
+# MDEV-32320: Server crashes at TABLE::add_tmp_key
+#
+select
+( ( 'x' , 1.000000 ) , 1 )
+IN
+(SELECT
+'x' , 'x'
+ WHERE ( 'x' )
+UNION
+SELECT 1 , 'x'
+ HAVING 1 != 1
+) as T;
+ERROR 21000: Operand should contain 2 column(s)
+SELECT
+EXISTS (
+WITH x ( x ) AS ( SELECT 1 )
+SELECT NULL
+WHERE ( 1 , 1 ) =
+(SELECT
+1 , ( ( x , 1.000000 ) , 1 )
+IN
+(SELECT 'x' , 'x' WHERE ( ( 'x' ) )
+UNION
+SELECT 1 , x HAVING 1 != 1
+)
+FROM x
+)
+);
+ERROR 21000: Operand should contain 2 column(s)
+#
+# MDEV-29362: Constant subquery used as left part of IN subquery
+#
+CREATE TABLE t1 (a int) ENGINE=MyISAM;
+INSERT INTO t1 VALUES (15), (1), (2);
+CREATE TABLE t2 (b int) ENGINE=MyISAM;
+INSERT INTO t2 VALUES (15), (1);
+CREATE TABLE t3 (c int) ENGINE=MyISAM;
+INSERT INTO t3 VALUES (15), (1);
+SET optimizer_switch='condition_pushdown_from_having=off';
+SELECT a FROM t1 GROUP BY a
+HAVING a = ( (SELECT b FROM t2 where b=1) IN (SELECT c FROM t3)  ) + 1;
+a
+2
+SELECT a FROM t1 GROUP BY a
+HAVING a IN ( (SELECT b FROM t2 where b=1) IN (SELECT c FROM t3)  );
+a
+1
+SET optimizer_switch='condition_pushdown_from_having=on';
+SELECT a FROM t1 GROUP BY a
+HAVING a = ( (SELECT b FROM t2 where b=1) IN (SELECT c FROM t3)  ) + 1;
+a
+2
+SELECT a FROM t1 GROUP BY a
+HAVING a IN ( (SELECT b FROM t2 where b=1) IN (SELECT c FROM t3)  );
+a
+1
+EXPLAIN FORMAT=JSON SELECT a FROM t1 GROUP BY a
+HAVING a = ( (SELECT b FROM t2 where b=1) IN (SELECT c FROM t3)  ) + 1;
+EXPLAIN
+{
+  "query_block": {
+    "select_id": 1,
+    "cost": 0.012403489,
+    "nested_loop": [
+      {
+        "table": {
+          "table_name": "t1",
+          "access_type": "ALL",
+          "loops": 1,
+          "rows": 3,
+          "cost": 0.010504815,
+          "filtered": 100,
+          "attached_condition": "t1.a = <cache>((<in_optimizer>((subquery#2),<exists>(subquery#3))) + 1)"
+        }
+      }
+    ],
+    "subqueries": [
+      {
+        "query_block": {
+          "select_id": 3,
+          "cost": 0.01034841,
+          "having_condition": "trigcond(t3.c is null)",
+          "nested_loop": [
+            {
+              "table": {
+                "table_name": "t3",
+                "access_type": "ALL",
+                "loops": 1,
+                "rows": 2,
+                "cost": 0.01034841,
+                "filtered": 100,
+                "attached_condition": "trigcond(1 = t3.c or t3.c is null)"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "query_block": {
+          "select_id": 2,
+          "cost": 0.01034841,
+          "nested_loop": [
+            {
+              "table": {
+                "table_name": "t2",
+                "access_type": "ALL",
+                "loops": 1,
+                "rows": 2,
+                "cost": 0.01034841,
+                "filtered": 100,
+                "attached_condition": "t2.b = 1"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}
+PREPARE stmt FROM "SELECT a FROM t1 GROUP BY a
+HAVING a = ( (SELECT b FROM t2 where b=1) IN (SELECT c FROM t3)  ) + 1";
+EXECUTE stmt;
+a
+2
+EXECUTE stmt;
+a
+2
+DEALLOCATE PREPARE stmt;
+DROP TABLE t1,t2,t3;
+#
+# MDEV-33747: Optimization of (SELECT) IN (SELECT ...) executes subquery at prepare stage
+#
+create table t1 (a int, b int);
+insert into t1 select seq, seq from seq_1_to_200;
+create table t2 as select * from t1;
+create table t3 as select * from t1;
+analyze table t1,t2,t3;
+Table	Op	Msg_type	Msg_text
+test.t1	analyze	status	Engine-independent statistics collected
+test.t1	analyze	status	OK
+test.t2	analyze	status	Engine-independent statistics collected
+test.t2	analyze	status	OK
+test.t3	analyze	status	Engine-independent statistics collected
+test.t3	analyze	status	OK
+select @@expensive_subquery_limit < 200 as DEFAULTS_ARE_SUITABLE;
+DEFAULTS_ARE_SUITABLE
+1
+flush status;
+explain select * from t1 where a<3 or (select max(a) from t2) in (select b from t3);
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
+1	PRIMARY	t1	ALL	NULL	NULL	NULL	NULL	200	Using where
+3	SUBQUERY	t3	ALL	NULL	NULL	NULL	NULL	200	Using where
+2	SUBQUERY	t2	ALL	NULL	NULL	NULL	NULL	200	
+# Must show 0. If this shows 200, this means subquery was executed and you have a bug:
+show status like 'Handler_read_rnd_next%';
+Variable_name	Value
+Handler_read_rnd_next	0
+drop table t1,t2,t3;
 # End of 10.4 tests

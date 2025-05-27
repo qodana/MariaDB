@@ -57,7 +57,6 @@ foreach(comp connect-engine connect-engine-jdbc ClientPlugins aws-key-management
   add_component(${comp} GROUP MySQLServer HIDDEN)
 endforeach()
 
-
 add_component_group(Devel
    DISPLAY_NAME "Development components"
    DESCRIPTION "Installs C/C++ header files and libraries")
@@ -79,7 +78,7 @@ endforeach()
 
 set(CPACK_COMPONENTS_ALL ${COMPONENTS_INSTALL})
 
-# Extra things beyong CMake components
+# Extra things beyond CMake components
 # DBInstance (running mysql_install_db.exe)
 set(WIX_FEATURE_MySQLServer_EXTRA_FEATURES "DBInstance;SharedClientServerComponents")
 

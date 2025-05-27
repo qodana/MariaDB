@@ -33,17 +33,6 @@ Created 2/17/1996 Heikki Tuuri
 struct btr_pcur_t;
 /** B-tree cursor */
 struct btr_cur_t;
-/** B-tree search information for the adaptive hash index */
-struct btr_search_t;
-
-#ifdef BTR_CUR_HASH_ADAPT
-/** Is search system enabled.
-Search system is protected by array of latches. */
-extern char	btr_search_enabled;
-
-/** Number of adaptive hash index partition. */
-extern ulong	btr_ahi_parts;
-#endif /* BTR_CUR_HASH_ADAPT */
 
 /** The size of a reference to data stored on a different page.
 The reference is stored at the end of the prefix of the field
@@ -68,9 +57,6 @@ enum btr_latch_mode {
 	/** Search the previous record.
 	Used in btr_pcur_move_backward_from_page(). */
 	BTR_SEARCH_PREV = 4 | BTR_SEARCH_LEAF,
-	/** Modify the previous record.
-	Used in btr_pcur_move_backward_from_page(). */
-	BTR_MODIFY_PREV = 4 | BTR_MODIFY_LEAF,
 	/** Start modifying the entire B-tree. */
 	BTR_MODIFY_TREE = 8 | BTR_MODIFY_LEAF,
 	/** Continue modifying the entire R-tree.

@@ -38,6 +38,7 @@ force=0
 in_rpm=0
 ip_only=0
 cross_bootstrap=0
+do_resolve=0
 auth_root_authentication_method=socket
 auth_root_socket_user=""
 skip_test_db=0
@@ -47,7 +48,7 @@ dirname0=`dirname $0 2>/dev/null`
 dirname0=`dirname $dirname0 2>/dev/null`
 
 case "$0" in
-  *mysqld_install_db)
+  *mysql_install_db)
     echo "$0: Deprecated program name. It will be removed in a future release, use 'mariadb-install-db' instead" 1>&2
     ;;
 esac
@@ -336,6 +337,11 @@ parse_arguments PICK-ARGS-FROM-ARGV "$@"
 
 rel_mysqld="$dirname0/@INSTALL_SBINDIR@/mariadbd"
 
+if test "$cross_bootstrap" -eq 0 -a "$in_rpm" -eq 0 -a "$force" -eq 0
+then
+  do_resolve=1
+fi
+
 # Configure paths to support files
 if test -n "$srcdir"
 then
@@ -350,33 +356,13 @@ then
   pamtooldir="$builddir/plugin/auth_pam"
 elif test -n "$basedir"
 then
-  bindir="$basedir/bin" # only used in the help text
-  resolveip=`find_in_dirs resolveip @resolveip_locations@`
-  if test -z "$resolveip"
-  then
-    cannot_find_file resolveip @resolveip_locations@
-    exit 1
-  fi
-  mysqld=`find_in_dirs mariadbd @mysqld_locations@`
-  if test -z "$mysqld"
-  then
-      cannot_find_file mariadbd @mysqld_locations@
-      exit 1
-  fi
-  langdir=`find_in_dirs --dir errmsg.sys @errmsg_locations@`
-  if test -z "$langdir"
-  then
-    cannot_find_file errmsg.sys @errmsg_locations@
-    exit 1
-  fi
-  srcpkgdatadir=`find_in_dirs --dir fill_help_tables.sql @pkgdata_locations@`
-  buildpkgdatadir=$srcpkgdatadir
-  if test -z "$srcpkgdatadir"
-  then
-    cannot_find_file fill_help_tables.sql @pkgdata_locations@
-    exit 1
-  fi
-  plugindir=`find_in_dirs --dir auth_pam.so $basedir/lib*/plugin $basedir/lib*/mysql/plugin $basedir/lib/*/mariadb19/plugin`
+  bindir="$basedir/@INSTALL_BINDIR@"
+  resolveip="$bindir/resolveip"
+  mysqld="$basedir/@INSTALL_SBINDIR@/mariadbd"
+  langdir="$basedir/@INSTALL_MYSQLSHAREDIR@/english"
+  srcpkgdatadir="$basedir/@INSTALL_MYSQLSHAREDIR@"
+  buildpkgdatadir="$basedir/@INSTALL_MYSQLSHAREDIR@"
+  plugindir="$basedir/@INSTALL_PLUGINDIR@"
   pamtooldir=$plugindir
 # relative from where the script was run for a relocatable install
 elif test -n "$dirname0" -a -x "$rel_mysqld" -a ! "$rel_mysqld" -ef "@sbindir@/mariadbd"
@@ -448,7 +434,7 @@ fi
 hostname=`@HOSTNAME@`
 
 # Check if hostname is valid
-if test "$cross_bootstrap" -eq 0 -a "$in_rpm" -eq 0 -a "$force" -eq 0
+if test "$do_resolve" -eq 1
 then
   resolved=`"$resolveip" $hostname 2>&1`
   if test $? -ne 0
@@ -474,7 +460,7 @@ then
   fi
 fi
 
-if test "$ip_only" -eq 1
+if test "$do_resolve" -eq 1 -a "$ip_only" -eq 1
 then
   hostname=`echo "$resolved" | while read a; do echo ${a##* }; done`
 fi
@@ -511,7 +497,7 @@ done
 
 if test -n "$user"
 then
-  if test -z "$srcdir" -a "$in_rpm" -eq 0
+  if test -z "$srcdir" -a "$in_rpm" -eq 0 -a -d "$pamtooldir/auth_pam_tool_dir"
   then
     chown 0 "$pamtooldir/auth_pam_tool_dir/auth_pam_tool" && \
     chmod 04755 "$pamtooldir/auth_pam_tool_dir/auth_pam_tool"
@@ -653,7 +639,7 @@ else
   echo "--general-log gives you a log in $ldata that may be helpful."
   link_to_help
   echo "You can find the latest source at https://downloads.mariadb.org and"
-  echo "the maria-discuss email list at https://launchpad.net/~maria-discuss"
+  echo "the MariaDB discuss email list at https://lists.mariadb.org/postorius/lists/discuss.lists.mariadb.org/"
   echo
   echo "Please check all of the above before submitting a bug report"
   echo "at https://mariadb.org/jira"
@@ -701,7 +687,7 @@ then
   then
     echo
     echo "You can start the MariaDB daemon with:"
-    echo "cd '$basedir' ; $bindir/mariadb-safe --datadir='$ldata'"
+    echo "cd '$basedir' ; $bindir/mariadbd-safe --datadir='$ldata'"
     echo
     echo "You can test the MariaDB daemon with mariadb-test-run.pl"
     echo "cd '$basedir/@INSTALL_MYSQLTESTDIR@' ; perl mariadb-test-run.pl"

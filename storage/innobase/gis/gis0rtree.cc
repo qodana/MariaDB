@@ -74,7 +74,7 @@ rtr_page_split_initialize_nodes(
 	n_recs = ulint(page_get_n_recs(page)) + 1;
 
 	/*We reserve 2 MBRs memory space for temp result of split
-	algrithm. And plus the new mbr that need to insert, we
+	algorithm. And plus the new mbr that need to insert, we
 	need (n_recs + 3)*MBR size for storing all MBRs.*/
 	buf = static_cast<double*>(mem_heap_alloc(
 		heap, DATA_MBR_LEN * (n_recs + 3)
@@ -140,12 +140,11 @@ rtr_index_build_node_ptr(
 	dtuple_t*	tuple;
 	dfield_t*	field;
 	byte*		buf;
-	ulint		n_unique;
 	ulint		info_bits;
 
 	ut_ad(dict_index_is_spatial(index));
 
-	n_unique = DICT_INDEX_SPATIAL_NODEPTR_SIZE;
+	uint16_t n_unique = DICT_INDEX_SPATIAL_NODEPTR_SIZE;
 
 	tuple = dtuple_create(heap, n_unique + 1);
 
@@ -210,8 +209,8 @@ rtr_update_mbr_field(
 	big_rec_t*	dummy_big_rec;
 	buf_block_t*	block;
 	rec_t*		child_rec;
-	ulint		up_match = 0;
-	ulint		low_match = 0;
+	uint16_t	up_match = 0;
+	uint16_t	low_match = 0;
 	ulint		child;
 	ulint		rec_info;
 	bool		ins_suc = true;
@@ -220,7 +219,7 @@ rtr_update_mbr_field(
 	rec_offs*	offsets2;
 
 	rec = btr_cur_get_rec(cursor);
-	page = page_align(rec);
+	page = btr_cur_get_page(cursor);
 
 	rec_info = rec_get_info_bits(rec, rec_offs_comp(offsets));
 
@@ -278,7 +277,7 @@ rtr_update_mbr_field(
 				ins_suc = false;
 
 				/* Since btr_cur_update_alloc_zip could
-				reorganize the page, we need to repositon
+				reorganize the page, we need to reposition
 				cursor2. */
 				if (cursor2) {
 					cursor2->page_cur.rec =
@@ -607,7 +606,7 @@ rtr_adjust_upper_level(
 		/* Insert the node for the new page. */
 		node_ptr_upper = rtr_index_build_node_ptr(
 			sea_cur->index(), new_mbr, first, new_page_no, heap);
-		ulint	up_match = 0, low_match = 0;
+		uint16_t up_match = 0, low_match = 0;
 		err = page_cur_search_with_match(node_ptr_upper,
 						 PAGE_CUR_LE,
 						 &up_match, &low_match,
@@ -1106,7 +1105,7 @@ corrupted:
 	page_cursor->block = cur_split_node->n_node != first_rec_group
 		? new_block : block;
 
-	ulint up_match = 0, low_match = 0;
+	uint16_t up_match = 0, low_match = 0;
 
 	if (page_cur_search_with_match(tuple,
 				       PAGE_CUR_LE, &up_match, &low_match,
@@ -1421,7 +1420,7 @@ rtr_root_raise_and_insert(
 	if (tuple) {
 		ut_ad(dtuple_check_typed(tuple));
 		/* Reposition the cursor to the child node */
-		ulint low_match = 0, up_match = 0;
+		uint16_t low_match = 0, up_match = 0;
 
 		if (page_cur_search_with_match(tuple, PAGE_CUR_LE,
 					       &up_match, &low_match,
@@ -1549,7 +1548,7 @@ rtr_page_copy_rec_list_end_no_locks(
 		return DB_CORRUPTION;
 	}
 
-	ut_a(page_is_comp(new_page) == page_rec_is_comp(rec));
+	ut_a(page_is_comp(new_page) == page_is_comp(block->page.frame));
 	ut_a(mach_read_from_2(new_page + srv_page_size - 10) == (ulint)
 	     (page_is_comp(new_page) ? PAGE_NEW_INFIMUM : PAGE_OLD_INFIMUM));
 
@@ -1889,7 +1888,7 @@ Calculates MBR_AREA(a+b) - MBR_AREA(a)
 Note: when 'a' and 'b' objects are far from each other,
 the area increase can be really big, so this function
 can return 'inf' as a result.
-Return the area increaed. */
+Return the area increased. */
 static double
 rtree_area_increase(
 	const uchar*	a,		/*!< in: original mbr. */

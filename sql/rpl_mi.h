@@ -105,7 +105,8 @@ public:
     @retval void
   */
   void store_ids(THD *thd);
-
+  /* Same as above, but store the id's into a group of fields */
+  void store_ids(Field ***field);
   /*
     Initialize the given domain id list (DYNAMIC_ARRAY) with the
     space-separated list of numbers from the specified IO_CACHE where
@@ -210,6 +211,16 @@ class Master_info : public Slave_reporting_capability
   void lock_slave_threads();
   void unlock_slave_threads();
 
+  ulonglong get_slave_skip_counter()
+  {
+    return rli.slave_skip_counter;
+  }
+
+  ulonglong get_max_relay_log_size()
+  {
+    return rli.max_relay_log_size;
+  }
+
   /* the variables below are needed because we can change masters on the fly */
   char master_log_name[FN_REFLEN+6]; /* Room for multi-*/
   char host[HOSTNAME_LENGTH*SYSTEM_CHARSET_MBMAXLEN+1];
@@ -221,7 +232,7 @@ class Master_info : public Slave_reporting_capability
   char ssl_ca[FN_REFLEN], ssl_capath[FN_REFLEN], ssl_cert[FN_REFLEN];
   char ssl_cipher[FN_REFLEN], ssl_key[FN_REFLEN];
   char ssl_crl[FN_REFLEN], ssl_crlpath[FN_REFLEN];
-  bool ssl_verify_server_cert;
+  my_bool ssl_verify_server_cert; /* MUST be my_bool, see mysql_option() */
 
   my_off_t master_log_pos;
   File fd; // we keep the file open, so we need to remember the file pointer
@@ -232,6 +243,7 @@ class Master_info : public Slave_reporting_capability
   THD *io_thd;
   MYSQL* mysql;
   uint32 file_id;				/* for 3.23 load data infile */
+  uint mysql_version;
   Relay_log_info rli;
   uint port;
   Rpl_filter* rpl_filter;      /* Each replication can set its filter rule*/
@@ -240,8 +252,13 @@ class Master_info : public Slave_reporting_capability
     Initialized to novalue, then set to the queried from master
     @@global.binlog_checksum and deactivated once FD has been received.
   */
-  enum enum_binlog_checksum_alg checksum_alg_before_fd;
+  enum_binlog_checksum_alg checksum_alg_before_fd;
+  /** pause duration between each connection retry */
   uint connect_retry;
+  /** per-slave @ref master_retry_count */
+  ulong retry_count;
+  /** count of connects the most-recent (or the current) connection has tried */
+  ulong connects_tried;
 #ifndef DBUG_OFF
   int events_till_disconnect;
 
@@ -366,13 +383,19 @@ class Master_info : public Slave_reporting_capability
        it must be ignored similarly to the replicate-same-server-id rule.
  */
   bool do_accept_own_server_id= false;
+  /*
+    Set to 1 when semi_sync is enabled. Set to 0 if there is any transmit
+    problems to the slave, in which case any furter semi-sync reply is
+    ignored
+  */
+  bool semi_sync_reply_enabled;
   List <start_alter_info> start_alter_list;
   MEM_ROOT mem_root;
   /*
     Flag is raised at the parallel worker slave stop. Its purpose
     is to mark the whole start_alter_list when slave stops.
     The flag is read by Start Alter event to self-mark its state accordingly
-    at time its alter info struct is about to be appened to the list.
+    at time its alter info struct is about to be appended to the list.
   */
   bool is_shutdown= false;
 
@@ -413,7 +436,7 @@ int flush_master_info(Master_info* mi,
 void copy_filter_setting(Rpl_filter* dst_filter, Rpl_filter* src_filter);
 void update_change_master_ids(DYNAMIC_ARRAY *new_ids, DYNAMIC_ARRAY *old_ids);
 void prot_store_ids(THD *thd, DYNAMIC_ARRAY *ids);
-
+void field_store_ids(Field *field, DYNAMIC_ARRAY *ids);
 /*
   Multi master are handled trough this struct.
   Changes to this needs to be protected by LOCK_active_mi;

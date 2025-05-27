@@ -4,6 +4,10 @@
 # Bug#42419 Server crash with "Pure virtual method called" on two concurrent connections
 #
 
+--disable_query_log
+call mtr.add_suppression("InnoDB: Transaction was aborted due to ");
+--enable_query_log
+
 --source include/not_embedded.inc
 
 let $innodb_lock_wait_timeout= query_get_value(SHOW VARIABLES LIKE 'innodb_lock_wait_timeout%', Value, 1);
@@ -57,7 +61,7 @@ let $field= State;
 let $condition= = 'Updating';
 --source include/wait_show_condition.inc
 
-# If the testing box is overloadeded and innodb_lock_wait_timeout is too small
+# If the testing box is overloaded and innodb_lock_wait_timeout is too small
 # we might get here ER_LOCK_WAIT_TIMEOUT.
 --error ER_LOCK_DEADLOCK
 INSERT INTO t1_tmp (b) SELECT b FROM t1 WHERE a = 1;

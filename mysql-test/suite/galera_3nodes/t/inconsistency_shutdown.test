@@ -26,7 +26,7 @@ CREATE TABLE t1 (f1 INTEGER PRIMARY KEY, f2 INT);
 INSERT INTO t1 VALUES (1, 0),(2, 0),(3, 0),(4, 0),(5, 0),(6, 0),(7, 0),(8, 0);
 
 --connection node_2
-# Allow 1K slave queue woithout flow control
+# Allow 1K slave queue without flow control
 SET GLOBAL wsrep_provider_options='gcs.fc_limit=1K';
 # Introduce 2 inconsistencies
 SET wsrep_on=OFF;
@@ -36,7 +36,7 @@ SET wsrep_on=ON;
 
 # Build up slave queue:
 # - first 8 events will be picked by slave threads
-# - one moreevent will be waiting in slave queue
+# - one more event will be waiting in slave queue
 LOCK TABLES t1 WRITE;
 --connection node_1
 UPDATE t1 SET f2 = 1 WHERE f1 = 1;
@@ -180,11 +180,11 @@ SET GLOBAL wsrep_on=OFF;
 
 DROP TABLE t1;
 
-CALL mtr.add_suppression('Can\'t find record in \'t1\'');
-CALL mtr.add_suppression('Update_rows_v1 apply failed');
-CALL mtr.add_suppression('Inconsistency detected: Inconsistent by consensus on');
-CALL mtr.add_suppression('last left .* greater than drain seqno');
-CALL mtr.add_suppression('WSREP: Failed to apply write set:');
+CALL mtr.add_suppression("Can't find record in 't1'");
+CALL mtr.add_suppression("Update_rows_v1 apply failed");
+CALL mtr.add_suppression("Inconsistency detected: Inconsistent by consensus on");
+CALL mtr.add_suppression("last left .* greater than drain seqno");
+CALL mtr.add_suppression("WSREP: Failed to apply write set: ");
 
 # Restore original auto_increment_offset values.
 --source ../galera/include/auto_increment_offset_restore.inc

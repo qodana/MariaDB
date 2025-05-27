@@ -92,7 +92,7 @@ eval CREATE TABLE federated.t1 (
     `name` varchar(32) NOT NULL default ''
     )
   ENGINE="FEDERATED" DEFAULT CHARSET=latin1
-  CONNECTION='mysql://root@127.0.0.1:$SLAVE_MYPORT/federated/t1';
+  CONNECTION='mariadb://root@127.0.0.1:$SLAVE_MYPORT/federated/t1';
 
 INSERT INTO federated.t1 (id, name) VALUES (1, 'foo');
 INSERT INTO federated.t1 (id, name) VALUES (2, 'fee');
@@ -1505,7 +1505,7 @@ DROP TABLE federated.test;
 # cases this resulted in incorrect (garbage) values of OLD variables
 # and lost changes to NEW variables.
 # Since for federated engine only operation which is affected by wrong
-# fields mark-up is handler::write_row() this file constains coverage
+# fields mark-up is handler::write_row() this file contains coverage
 # for ON INSERT triggers only.
 #
 connection slave;

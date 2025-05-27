@@ -15,6 +15,7 @@
 
 --source include/default_optimizer_switch.inc
 --source include/default_charset.inc
+--source include/test_db_charset_latin1.inc
 
 set optimizer_switch='mrr=on,mrr_sort_keys=on,index_condition_pushdown=on';
 #
@@ -34,7 +35,7 @@ drop database if exists world;
 
 set names utf8;
 
-create database world;
+create database world character set latin1;
 use world;
 
 --source include/world_schema.inc
@@ -53,9 +54,11 @@ create index Language on CountryLanguage(Language);
 create index CityName on City(Name);
 alter table City change population population int(11) null default 0;
 
+--disable_cursor_protocol
 --enable_prepare_warnings
 select max(id) from City into @max_city_id;
 --disable_prepare_warnings
+--enable_cursor_protocol
 insert into City values (@max_city_id + 1,'Kilifarevo','BGR',NULL);
 
 
@@ -454,7 +457,8 @@ drop database world;
 #   IN_EXIST transformations are applied to both subqueries
 #   outer subquery is materialized while the inner subquery  is not
 #(IN_EXIST transformation is applied to it)
-#   inner subqyery is materialized while the outer subquery  is not (
+#   inner subquery is materialized while the outer subquery  is not (
 #IN_EXIST transformation is applied to it)
 
 set optimizer_switch=default;
+--source include/test_db_charset_restore.inc

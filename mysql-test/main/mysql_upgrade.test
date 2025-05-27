@@ -1,8 +1,16 @@
+--source include/long_test.inc
 -- source include/mysql_upgrade_preparation.inc
 -- source include/have_working_dns.inc
 -- source include/have_innodb.inc
 -- source include/have_partition.inc
--- source include/no_valgrind_without_big.inc
+
+let majorminor=`select substring_index(version(), '.', 2)`;
+# for major upgrade test, see below
+let major=`select substring_index(version(), '.', 1) - (version() like '%.0.%')`;
+
+if (`select version() like '%.%.0-%'`) {
+  --skip cannot test minor upgrade for previews
+}
 
 set sql_mode="";
 
@@ -32,7 +40,7 @@ file_exists $MYSQLD_DATADIR/mysql_upgrade_info;
 file_exists $MYSQLD_DATADIR/mariadb_upgrade_info;
 
 --echo Run it again - should say already completed
---replace_regex /upgraded to [^\n].*/upgraded to VERSION./ /again for [^\n]*/again for VERSION./
+--replace_result $MYSQL_SERVER_VERSION X.Y.Z-MariaDB
 --exec $MYSQL_UPGRADE 2>&1
 
 # It should have created a file in the MySQL Servers datadir
@@ -302,10 +310,11 @@ FLUSH PRIVILEGES;
 
 --error 1
 --exec $MYSQL_UPGRADE --check-if-upgrade-is-needed --silent
---replace_regex /\d\d\.\d*\.\d*[^ .\n]*/MariaDB /
+--replace_result $MYSQL_SERVER_VERSION X.Y.Z-MariaDB
 --error 1
 --exec $MYSQL_UPGRADE --check-if-upgrade-is-needed
---replace_regex /\d\d\.\d*\.\d*[^ .\n]*/MariaDB / /'mariadb.* as:[^\n]*/'mariadb' as: mariadb/
+--replace_result $MYSQL_SERVER_VERSION X.Y.Z-MariaDB
+--replace_regex /'mariadb.* as:[^\n]*/'mariadb' as: mariadb/
 --error 1
 --exec $MYSQL_UPGRADE --check-if-upgrade-is-needed --verbose
 
@@ -333,16 +342,18 @@ perl;
   my $file= $ENV{'DATADIR'} or die "MYSQLD_DATADIR not set";
   $ver =~ s/^(\d*)\.(\d*).(\d*)(.*)/$1.$2.0$4/;
   open(FILE, ">$file/mariadb_upgrade_info") or die "Failed to open $file";
+  binmode FILE;
   print FILE "$ver\n";
   close(FILE);
 EOF
 
 --error 1
 --exec $MYSQL_UPGRADE --check-if-upgrade-is-needed --silent
---replace_regex /\d\d\.\d*\.\d*[^ .\n]*/MariaDB / /'mariadb.* as:[^\n]*/'mariadb' as: mariadb/
+--replace_result $MYSQL_SERVER_VERSION X.Y.Z-MariaDB $majorminor X.Y
+--replace_regex /'mariadb.* as:[^\n]*/'mariadb' as: mariadb/
 --error 1
 --exec $MYSQL_UPGRADE --check-if-upgrade-is-needed --verbose
---replace_regex /\d\d\.\d*\.\d*[^ .\n]*/MariaDB /
+--replace_result $MYSQL_SERVER_VERSION X.Y.Z-MariaDB $majorminor X.Y
 --exec $MYSQL_UPGRADE
 --remove_file $MYSQLD_DATADIR/mariadb_upgrade_info
 
@@ -358,23 +369,17 @@ perl;
   my $ver= $ENV{'MYSQL_SERVER_VERSION'} or die "MYSQL_SERVER_VERSION not set";
   my $file= $ENV{'DATADIR'} or die "MYSQLD_DATADIR not set";
   open(FILE, ">$file/mariadb_upgrade_info") or die "Failed to open $file";
-  if ($ver =~ m/(\d*)\.0\.(\d*)(.*)/)
-  {
-     my $prev= $1-1;
-     $ver= $prev . '.0.' . $2 . $3;
-  }
-  else
-  {
-    $ver =~ s/^(\d*)\.(\d*)\.(\d*)(.*)/$1.0.$3$4/;
-  }
+  binmode FILE;
+  $ver =~ s/^(\d+)\.(\d+)\.\d+.*/($1-!$2).'.0.99'/e;
   print FILE "$ver\n";
   close(FILE);
 EOF
 
 --exec $MYSQL_UPGRADE --check-if-upgrade-is-needed --silent
---replace_regex /\d\d\.\d*\.\d*[^ .\n]*/MariaDB /
+--replace_result $MYSQL_SERVER_VERSION X.Y.Z-MariaDB $major X
 --exec $MYSQL_UPGRADE --check-if-upgrade-is-needed
---replace_regex /\d\d\.\d*\.\d*[^ .\n]*/MariaDB / /'mariadb.* as:[^\n]*/'mysql' as: mysql/
+--replace_result $MYSQL_SERVER_VERSION X.Y.Z-MariaDB $major X
+--replace_regex /'mariadb.* as:[^\n]*/'mysql' as: mysql/
 --exec $MYSQL_UPGRADE --check-if-upgrade-is-needed --verbose
 --remove_file $MYSQLD_DATADIR/mariadb_upgrade_info
 drop table mysql.global_priv;
@@ -405,20 +410,7 @@ update mysql.db set Delete_history_priv='Y' where db like 'test%';
 drop table mysql.global_priv;
 rename table mysql.global_priv_bak to mysql.global_priv;
 
---echo #
---echo # MDEV-16735 Upgrades only work if 'alter_algorithm' is 'DEFAULT'
---echo # or 'COPY'. Test that the session value 'DEFAULT' in mysql_upgrade
---echo # properly overrides the potentially incompatible global value.
---echo #
-
-SET GLOBAL alter_algorithm='INPLACE';
-SHOW GLOBAL VARIABLES LIKE 'alter_algorithm';
---exec $MYSQL_UPGRADE --force 2>&1
-SET GLOBAL alter_algorithm=DEFAULT;
-SHOW GLOBAL VARIABLES LIKE 'alter_algorithm';
---remove_file $MYSQLD_DATADIR/mariadb_upgrade_info
-
---echo End of 10.3 tests
+--echo # End of 10.3 tests
 
 --source include/switch_to_mysql_user.inc
 drop view mysql.user_bak;
@@ -507,6 +499,27 @@ drop table mysql.global_priv;
 rename table mysql.global_priv_bak to mysql.global_priv;
 --remove_file $MYSQLD_DATADIR/mariadb_upgrade_info
 
+--echo #
+--echo # mariadb-upgrade fails with sql_safe_updates = on
+--echo #
+
+set @orig_sql_safe_updates = @@GLOBAL.sql_safe_updates;
+set global sql_safe_updates=ON;
+--exec $MYSQL_UPGRADE --force 2>&1
+--remove_file $MYSQLD_DATADIR/mariadb_upgrade_info
+set global sql_safe_updates=@orig_sql_safe_updates;
+
+--echo #
+--echo # MDEV-32043 Remove plugins previously external that are now built in (unix_socket)
+--echo #
+
+INSERT INTO mysql.plugin SELECT 'unix_socket', 'auth_socket.so'
+    FROM information_schema.plugins WHERE plugin_name='unix_socket' AND plugin_library IS NULL;
+--echo # mariadb-upgrade --force --silent 2>&1
+--exec $MYSQL_UPGRADE --force --silent 2>&1
+SELECT * FROM mysql.plugin WHERE name='unix_socket';
+--remove_file $MYSQLD_DATADIR/mariadb_upgrade_info
+
 --echo # End of 10.4 tests
 
 #
@@ -540,3 +553,25 @@ call mtr.add_suppression("Column count of mysql.proc is wrong. Expected 21, foun
 
 --let $old_version= 10.4
 --source include/load_dump_and_upgrade.inc
+
+--echo # End of 10.5 tests
+
+--echo #
+--echo # MDEV-33554 Upgrade from 11.2 to 11.3 changes root's privileges
+--echo #
+alter table mysql.db drop column show_create_routine_priv;
+flush privileges;
+create user foo@bar;
+grant all privileges on mysql.* to foo@bar;
+show grants for foo@bar;
+flush privileges;
+show grants for foo@bar;
+
+--exec $MYSQL_UPGRADE --force --silent 2>&1
+--remove_file $MYSQLD_DATADIR/mariadb_upgrade_info
+
+select show_create_routine_priv from mysql.db where user='foo';
+show grants for foo@bar;
+drop user foo@bar;
+
+--echo # End of 11.3 tests

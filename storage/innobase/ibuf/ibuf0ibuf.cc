@@ -188,7 +188,7 @@ static dtuple_t *ibuf_entry_build(const rec_t *ibuf_rec, ulint not_redundant,
 	const byte*	data;
 	ulint		len;
 
-	tuple = dtuple_create(heap, n_fields);
+	tuple = dtuple_create(heap, uint16_t(n_fields));
 
 	index = dict_mem_index_create(
 		dict_table_t::create({C_STRING_WITH_LEN("")}, nullptr,
@@ -264,6 +264,9 @@ func_exit:
     goto func_exit;
   }
 
+  if (page_no >= fil_system.sys_space->free_limit)
+    goto corrupted;
+
   /* Since pessimistic inserts were prevented, we know that the
   page is still in the free list. NOTE that also deletes may take
   pages from the free list, but they take them from the start, and
@@ -279,6 +282,7 @@ func_exit:
   if (page_no != flst_get_last(PAGE_HEADER + PAGE_BTR_IBUF_FREE_LIST +
                                root->page.frame).page)
   {
+  corrupted:
     err= DB_CORRUPTION;
     goto func_exit;
   }
@@ -288,7 +292,8 @@ func_exit:
       buf_page_get_gen(page_id_t{0, page_no}, 0, RW_X_LATCH, nullptr, BUF_GET,
                        &mtr, &err))
     err= flst_remove(root, PAGE_HEADER + PAGE_BTR_IBUF_FREE_LIST,
-                     block, PAGE_HEADER + PAGE_BTR_IBUF_FREE_LIST_NODE, &mtr);
+                     block, PAGE_HEADER + PAGE_BTR_IBUF_FREE_LIST_NODE,
+                     fil_system.sys_space->free_limit, &mtr);
 
   if (err == DB_SUCCESS)
     buf_page_free(fil_system.sys_space, page_no, &mtr);
@@ -361,23 +366,34 @@ ibuf_insert_to_index_page(
 	ut_ad(!block->index);
 #endif /* BTR_CUR_HASH_ADAPT */
 	ut_ad(mtr->is_named_space(block->page.id().space()));
+        const auto comp = page_is_comp(page);
 
 	if (UNIV_UNLIKELY(index->table->not_redundant()
 			  != !!page_is_comp(page))) {
 		return DB_CORRUPTION;
 	}
 
-	rec = page_rec_get_next(page_get_infimum_rec(page));
-
-	if (!rec || page_rec_is_supremum(rec)) {
-		return DB_CORRUPTION;
+	if (comp) {
+		rec = const_cast<rec_t*>(
+			page_rec_next_get<true>(page,
+						page + PAGE_NEW_INFIMUM));
+		if (!rec || rec == page + PAGE_NEW_SUPREMUM) {
+			return DB_CORRUPTION;
+		}
+	} else {
+		rec = const_cast<rec_t*>(
+			page_rec_next_get<false>(page,
+						page + PAGE_OLD_INFIMUM));
+		if (!rec || rec == page + PAGE_OLD_SUPREMUM) {
+			return DB_CORRUPTION;
+		}
 	}
 
 	if (!rec_n_fields_is_sane(index, rec, entry)) {
 		return DB_CORRUPTION;
 	}
 
-	ulint up_match = 0, low_match = 0;
+	uint16_t up_match = 0, low_match = 0;
 	page_cur.index = index;
 	page_cur.block = block;
 
@@ -501,7 +517,7 @@ ibuf_set_del_mark(
 	page_cur_t	page_cur;
 	page_cur.block = block;
 	page_cur.index = index;
-	ulint		up_match = 0, low_match = 0;
+	uint16_t up_match = 0, low_match = 0;
 
 	ut_ad(dtuple_check_typed(entry));
 
@@ -559,7 +575,7 @@ ibuf_delete(
 	page_cur_t	page_cur;
 	page_cur.block = block;
 	page_cur.index = index;
-	ulint		up_match = 0, low_match = 0;
+	uint16_t	up_match = 0, low_match = 0;
 
 	ut_ad(dtuple_check_typed(entry));
 	ut_ad(!index->is_spatial());
@@ -782,7 +798,8 @@ static dberr_t ibuf_merge(fil_space_t *space, btr_cur_t *cur, mtr_t *mtr)
       {
         page_header_reset_last_insert(block, mtr);
         page_update_max_trx_id(block, buf_block_get_page_zip(block),
-                               page_get_max_trx_id(page_align(rec)), mtr);
+                               page_get_max_trx_id(btr_cur_get_page(cur)),
+                               mtr);
         dict_index_t *index;
         mem_heap_t *heap = mem_heap_create(512);
         dtuple_t *entry= ibuf_entry_build(rec, not_redundant, n_fields,
@@ -883,9 +900,9 @@ ATTRIBUTE_COLD dberr_t ibuf_upgrade()
   sql_print_information("InnoDB: Upgrading the change buffer");
 
 #ifdef BTR_CUR_HASH_ADAPT
-  const bool ahi= btr_search_enabled;
+  const bool ahi= btr_search.enabled;
   if (ahi)
-    btr_search_disable();
+    btr_search.disable();
 #endif
 
   dict_table_t *ibuf_table= dict_table_t::create({C_STRING_WITH_LEN("ibuf")},
@@ -990,7 +1007,7 @@ ATTRIBUTE_COLD dberr_t ibuf_upgrade()
 
 #ifdef BTR_CUR_HASH_ADAPT
   if (ahi)
-    btr_search_enable();
+    btr_search.enable();
 #endif
 
   ibuf_index->lock.free();
@@ -1012,8 +1029,7 @@ dberr_t ibuf_upgrade_needed()
   mtr.start();
   mtr.x_lock_space(fil_system.sys_space);
   dberr_t err;
-  const buf_block_t *header_page=
-    buf_page_get_gen(ibuf_header, 0, RW_S_LATCH, nullptr, BUF_GET, &mtr, &err);
+  const buf_block_t *header_page= recv_sys.recover(ibuf_header, &mtr, &err);
 
   if (!header_page)
   {
@@ -1026,8 +1042,7 @@ dberr_t ibuf_upgrade_needed()
     return err;
   }
 
-  const buf_block_t *root= buf_page_get_gen(ibuf_root, 0, RW_S_LATCH, nullptr,
-                                            BUF_GET, &mtr, &err);
+  const buf_block_t *root= recv_sys.recover(ibuf_root, &mtr, &err);
   if (!root)
     goto err_exit;
 

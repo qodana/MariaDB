@@ -65,7 +65,7 @@
   'min record length'.  Tail pages are for overflow data which can be of
   any size and thus doesn't have to be adjusted for different tables.
   If we add more columns to the table, some of the originally calculated
-  'cut off' points may not be optimal, but they shouldn't be 'drasticly
+  'cut off' points may not be optimal, but they shouldn't be 'drastically
   wrong'.
 
   When allocating data from the bitmap, we are trying to do it in a
@@ -232,7 +232,7 @@ my_bool _ma_bitmap_init(MARIA_SHARE *share, File file,
   uint max_page_size;
   MARIA_FILE_BITMAP *bitmap= &share->bitmap;
   uint size= share->block_size;
-  myf flag= MY_WME | (share->temporary ? MY_THREAD_SPECIFIC : 0);
+  myf flag= MY_WME | share->malloc_flag;
   pgcache_page_no_t first_bitmap_with_space;
 #ifndef DBUG_OFF
   /* We want to have a copy of the bitmap to be able to print differences */
@@ -1068,23 +1068,30 @@ static my_bool _ma_read_bitmap_page(MARIA_HA *info,
   adjust_total_size(info, page);
   bitmap->full_head_size=  bitmap->full_tail_size= 0;
   DBUG_ASSERT(share->pagecache->block_size == bitmap->block_size);
-  res= pagecache_read(share->pagecache,
-                      &bitmap->file, page, 0,
-                      bitmap->map, PAGECACHE_PLAIN_PAGE,
-                      PAGECACHE_LOCK_LEFT_UNLOCKED, 0) == NULL;
 
-  if (!res)
+  if (share->internal_table &&
+      page == 0 && share->state.state.data_file_length == bitmap->block_size)
   {
-    /* Calculate used_size */
-    const uchar *data, *end=  bitmap->map;
-    for (data= bitmap->map + bitmap->total_size; --data >= end && *data == 0; )
-    {}
-    bitmap->used_size= (uint) ((data + 1) - end);
-    DBUG_ASSERT(bitmap->used_size <= bitmap->total_size);
+    /* Avoid read of bitmap for internal temporary tables */
+    bzero(bitmap->map, bitmap->block_size);
+    bitmap->used_size= 0;
+    res= 0;
   }
   else
   {
-    _ma_set_fatal_error(info, my_errno);
+    res= pagecache_read(share->pagecache,
+                        &bitmap->file, page, 0,
+                        bitmap->map, PAGECACHE_PLAIN_PAGE,
+                        PAGECACHE_LOCK_LEFT_UNLOCKED, 0) == NULL;
+    if (!res)
+    {
+      /* Calculate used_size */
+      const uchar *data, *end=  bitmap->map;
+      for (data= bitmap->map + bitmap->total_size; --data >= end && *data == 0; )
+      {}
+      bitmap->used_size= (uint) ((data + 1) - end);
+      DBUG_ASSERT(bitmap->used_size <= bitmap->total_size);
+    }
   }
   /*
     We can't check maria_bitmap_marker here as if the bitmap page
@@ -1363,7 +1370,7 @@ static my_bool allocate_head(MARIA_FILE_BITMAP *bitmap, uint size,
   else
   {
     /*
-      This is not stricly needed as used_size should be alligned on 6,
+      This is not strictly needed as used_size should be alligned on 6,
        but for easier debugging lets try to keep it more accurate
     */
     uint position= (uint)  (best_data - bitmap->map) + 6;
@@ -1751,7 +1758,7 @@ static my_bool find_tail(MARIA_HA *info, uint length, size_t position)
 
   /*
     We have to add DIR_ENTRY_SIZE to ensure we have space for the tail and
-    it's directroy entry on the page
+    its directory entry on the page
   */
   while (allocate_tail(bitmap, length + DIR_ENTRY_SIZE, block))
     if (move_to_next_bitmap(info, bitmap))
@@ -2201,7 +2208,7 @@ abort:
    This function is only called when the new row can't fit in the space of
    the old row in the head page.
 
-   This is essently same as _ma_bitmap_find_place() except that
+   This is essentially the same as _ma_bitmap_find_place() except that
    we don't call find_head() to search in bitmaps where to put the page.
 
   RETURN
@@ -2630,7 +2637,7 @@ void _ma_bitmap_flushable(MARIA_HA *info, int non_flushable_inc)
   DBUG_ENTER("_ma_bitmap_flushable");
 
   /*
-    Not transactional tables are never automaticly flushed and needs no
+    Not transactional tables are never automatically flushed and need no
     protection
   */
   if (!share->now_transactional)
@@ -3077,21 +3084,25 @@ my_bool _ma_check_if_right_bitmap_type(MARIA_HA *info,
 int _ma_bitmap_create_first(MARIA_SHARE *share)
 {
   uint block_size= share->bitmap.block_size;
+  size_t error;
   File file= share->bitmap.file.file;
-  uchar marker[CRC_SIZE];
+  uchar *temp_buff;
+
+  if (!(temp_buff= (uchar*) my_alloca(block_size)))
+    return 1;
+  bzero(temp_buff, block_size);
 
   /*
     Next write operation of the page will write correct CRC
     if it is needed
   */
-  int4store(marker, MARIA_NO_CRC_BITMAP_PAGE);
+  int4store(temp_buff + block_size - CRC_SIZE, MARIA_NO_CRC_BITMAP_PAGE);
 
-  if (mysql_file_chsize(file, block_size - sizeof(marker),
-                        0, MYF(MY_WME)) ||
-      my_pwrite(file, marker, sizeof(marker),
-                block_size - sizeof(marker),
-                MYF(MY_NABP | MY_WME)))
+  error= my_pwrite(file, temp_buff, block_size, 0, MYF(MY_NABP | MY_WME));
+  my_afree(temp_buff);
+  if (error)
     return 1;
+
   share->state.state.data_file_length= block_size;
   _ma_bitmap_delete_all(share);
   return 0;
@@ -3335,6 +3346,10 @@ static my_bool _ma_bitmap_create_missing(MARIA_HA *info,
     goto err;
 
   share->state.state.data_file_length= (page + 1) * bitmap->block_size;
+  if (info->s->tracked &&
+      _ma_update_tmp_file_size(&share->track_data,
+                               share->state.state.data_file_length))
+    goto err;
 
  DBUG_RETURN(FALSE);
 err:

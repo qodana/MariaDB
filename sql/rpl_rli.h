@@ -251,7 +251,6 @@ public:
    */
   bool sql_force_rotate_relay;
 
-  time_t last_master_timestamp;
   /*
     The SQL driver thread sets this true while it is waiting at the end of the
     relay log for more events to arrive. SHOW SLAVE STATUS uses this to report
@@ -259,6 +258,19 @@ public:
   */
   bool sql_thread_caught_up;
 
+  /* Last executed timestamp */
+  my_time_t last_master_timestamp;
+  /*
+    Latest when + exec_time read from the master (by io_thread).
+    0 if there has been no new update events since the slave started.
+  */
+  time_t newest_master_timestamp;
+  /*
+    When + exec_time of the last committed event on the slave.
+    In case of delayed slave and slave_timestamp is not set
+    then set to when + exec_time -1 of the first seen event.
+  */
+  time_t slave_timestamp;
   void clear_until_condition();
   /**
     Reset the delay.
@@ -338,6 +350,8 @@ public:
   /* Condition for UNTIL master_gtid_pos. */
   slave_connection_state until_gtid_pos;
 
+  bool is_until_before_gtids;
+
   /*
     retried_trans is a cumulative counter: how many times the slave
     has retried a transaction (any) since slave started.
@@ -364,7 +378,7 @@ public:
   slave_connection_state ign_gtids;
 
   /* 
-    Indentifies where the SQL Thread should create temporary files for the
+    Identifies where the SQL Thread should create temporary files for the
     LOAD DATA INFILE. This is used for security reasons.
    */ 
   char slave_patternload_file[FN_REFLEN]; 
@@ -382,7 +396,7 @@ public:
   /*
     The restart_gtid_state is used when the SQL thread restarts on a relay log
     in GTID mode. In multi-domain parallel replication, each domain may have a
-    separat position, so some events in more progressed domains may need to be
+    separate position, so some events in more progressed domains may need to be
     skipped. This keeps track of the domains that have not yet reached their
     starting event.
   */
@@ -393,7 +407,7 @@ public:
 
   /*
     Invalidate cached until_log_name and group_relay_log_name comparison
-    result. Should be called after any update of group_realy_log_name if
+    result. Should be called after any update of group_relay_log_name if
     there chances that sql_thread is running.
   */
   inline void notify_group_relay_log_name_update()
@@ -506,11 +520,6 @@ public:
     m_flags&= ~flag;
   }
 
-  /**
-    Text used in THD::proc_info when the slave SQL thread is delaying.
-  */
-  static const char *const state_delaying_string;
-
   bool flush();
 
   /**
@@ -533,7 +542,7 @@ public:
   {
     mysql_mutex_assert_owner(&data_lock);
     sql_delay_end= delay_end;
-    thd_proc_info(sql_driver_thd, state_delaying_string);
+    THD_STAGE_INFO(sql_driver_thd, stage_sql_thd_waiting_until_delay);
   }
 
   int32 get_sql_delay() { return sql_delay; }
@@ -564,6 +573,10 @@ private:
 
     Guarded by data_lock. Written by the sql thread.  Read by client
     threads executing SHOW SLAVE STATUS.
+
+    This is calculated as:
+    clock_time_for_event_on_master + clock_difference_between_master_and_slave +
+    SQL_DELAY.
   */
   time_t sql_delay_end;
 
@@ -623,7 +636,7 @@ struct inuse_relaylog {
   rpl_gtid *relay_log_state;
   uint32 relay_log_state_count;
   /* Number of events in this relay log queued for worker threads. */
-  int64 queued_count;
+  Atomic_counter<int64> queued_count;
   /* Number of events completed by worker threads. */
   Atomic_counter<int64> dequeued_count;
   /* Set when all events have been read from a relaylog. */
@@ -837,7 +850,14 @@ struct rpl_group_info
     Used to do delayed update of rli->last_master_timestamp, for getting
     reasonable values out of Seconds_Behind_Master in SHOW SLAVE STATUS.
   */
-  time_t last_master_timestamp;
+  my_time_t last_master_timestamp;
+
+  /*
+    The exec_time of the transaction from the master's binlog. It is used with
+    log_slave_updates to preserve execution time value from the master when
+    re-binlogging on the slave.
+  */
+  my_time_t orig_exec_time;
 
   /*
     Information to be able to re-try an event group in case of a deadlock or
@@ -897,7 +917,7 @@ struct rpl_group_info
   void reinit(Relay_log_info *rli);
 
   /* 
-     Returns true if the argument event resides in the containter;
+     Returns true if the argument event resides in the container;
      more specifically, the checking is done against the last added event.
   */
   bool is_deferred_event(Log_event * ev)
@@ -958,7 +978,7 @@ struct rpl_group_info
   }
 
   void clear_tables_to_lock();
-  void cleanup_context(THD *, bool);
+  void cleanup_context(THD *, bool, bool keep_domain_owner= false);
   void slave_close_thread_tables(THD *);
   void mark_start_commit_no_lock();
   void mark_start_commit();

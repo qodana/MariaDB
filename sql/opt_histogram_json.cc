@@ -180,9 +180,8 @@ private:
     char buf[128];
     String str(buf, sizeof(buf), system_charset_info);
     THD *thd= current_thd;
-    timeval tv= {thd->query_start(), 0}; // we do not need microseconds
 
-    Timestamp(tv).to_datetime(thd).to_string(&str, 0);
+    Timestamp(thd->query_start(), 0).to_datetime(thd).to_string(&str, 0);
     writer.add_member("target_histogram_size").add_ull(hist_width);
     writer.add_member("collected_at").add_str(str.ptr());
     writer.add_member("collected_by").add_str(server_version);
@@ -549,7 +548,7 @@ bool read_hex_bucket_endpoint(json_engine_t *je, Field *field, String *out,
 
 
 /*
-  @brief  Parse a JSON reprsentation for one histogram bucket
+  @brief  Parse a JSON representation for one histogram bucket
 
   @param je     The JSON parser object
   @param field  Table field we are using histogram (used to convert
@@ -671,7 +670,7 @@ int Histogram_json_hb::parse_bucket(json_engine_t *je, Field *field,
     }
     save1.restore_to(je);
 
-    // Less common endoints:
+    // Less common endpoints:
     Json_string start_hex_str("start_hex");
     if (json_key_matches(je, start_hex_str.get()))
     {
@@ -743,7 +742,6 @@ int Histogram_json_hb::parse_bucket(json_engine_t *je, Field *field,
 
 bool Histogram_json_hb::parse(MEM_ROOT *mem_root, const char *db_name,
                               const char *table_name, Field *field,
-                              Histogram_type type_arg,
                               const char *hist_data, size_t hist_data_len)
 {
   json_engine_t je;
@@ -753,7 +751,6 @@ bool Histogram_json_hb::parse(MEM_ROOT *mem_root, const char *db_name,
   int end_element;
   bool end_assigned;
   DBUG_ENTER("Histogram_json_hb::parse");
-  DBUG_ASSERT(type_arg == JSON_HB);
 
   json_scan_start(&je, &my_charset_utf8mb4_bin,
                   (const uchar*)hist_data,
@@ -832,7 +829,7 @@ err:
                       ER_THD(thd, ER_JSON_HISTOGRAM_PARSE_FAILED),
                       db_name, table_name,
                       err, (je.s.c_str - (const uchar*)hist_data));
-  sql_print_error(ER_THD(thd, ER_JSON_HISTOGRAM_PARSE_FAILED),
+  sql_print_error(ER_DEFAULT(ER_JSON_HISTOGRAM_PARSE_FAILED),
                   db_name, table_name, err,
                   (je.s.c_str - (const uchar*)hist_data));
 

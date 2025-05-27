@@ -1,5 +1,6 @@
 call mtr.add_suppression("Sort aborted.*");
 call mtr.add_suppression("Out of sort memory; increase server sort buffer size");
+ALTER DATABASE test CHARACTER SET latin1 COLLATE latin1_swedish_ci;
 CREATE TABLE t1 (
 id int(6) DEFAULT '0' NOT NULL,
 idservice int(5),
@@ -795,18 +796,18 @@ col1	col	t2_col
 2	2	2
 3	3	1
 select col1 as col, col from t1 order by col;
-ERROR 23000: Column 'col' in order clause is ambiguous
+ERROR 23000: Column 'col' in ORDER BY is ambiguous
 select t1.col as c1, t2.col as c2 from t1, t2 where t1.col1=t2.col2
 order by col;
-ERROR 23000: Column 'col' in order clause is ambiguous
+ERROR 23000: Column 'col' in ORDER BY is ambiguous
 select t1.col as c1, t2.col as c2 from t1, t2 where t1.col1=t2.col2
 order by col;
-ERROR 23000: Column 'col' in order clause is ambiguous
+ERROR 23000: Column 'col' in ORDER BY is ambiguous
 select col1 from t1, t2 where t1.col1=t2.col2 order by col;
-ERROR 23000: Column 'col' in order clause is ambiguous
+ERROR 23000: Column 'col' in ORDER BY is ambiguous
 select t1.col as t1_col, t2.col2 from t1, t2 where t1.col1=t2.col2
 order by col;
-ERROR 23000: Column 'col' in order clause is ambiguous
+ERROR 23000: Column 'col' in ORDER BY is ambiguous
 select t1.col as t1_col, t2.col from t1, t2 where t1.col1=t2.col2
 order by col;
 t1_col	col
@@ -858,6 +859,8 @@ xxxxxxxxxxxxxxxxxxxx
 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxab
 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxaa
 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxz
+Warnings:
+Warning	4202	2 values were longer than max_sort_length. Sorting used only the first 64 bytes
 drop table t1;
 create table t1 (
 `sid` decimal(8,0) default null,
@@ -957,45 +960,45 @@ num
 2
 3
 SELECT a + 1 AS num, num + 1 FROM t1;
-ERROR 42S22: Unknown column 'num' in 'field list'
+ERROR 42S22: Unknown column 'num' in 'SELECT'
 SELECT a + 1 AS num, (select num + 2 FROM t1 LIMIT 1) FROM t1;
 num	(select num + 2 FROM t1 LIMIT 1)
 2	4
 3	5
 SELECT a.a + 1 AS num FROM t1 a JOIN t1 b ON num = b.a;
-ERROR 42S22: Unknown column 'num' in 'on clause'
+ERROR 42S22: Unknown column 'num' in 'ON'
 DROP TABLE t1;
 CREATE TABLE bug25126 (
 val int unsigned NOT NULL AUTO_INCREMENT PRIMARY KEY
 );
 UPDATE bug25126 SET MissingCol = MissingCol;
-ERROR 42S22: Unknown column 'MissingCol' in 'field list'
+ERROR 42S22: Unknown column 'MissingCol' in 'SET'
 UPDATE bug25126 SET val = val ORDER BY MissingCol;
-ERROR 42S22: Unknown column 'MissingCol' in 'order clause'
+ERROR 42S22: Unknown column 'MissingCol' in 'ORDER BY'
 UPDATE bug25126 SET val = val ORDER BY val;
 UPDATE bug25126 SET val = 1 ORDER BY val;
 UPDATE bug25126 SET val = 1 ORDER BY MissingCol;
-ERROR 42S22: Unknown column 'MissingCol' in 'order clause'
+ERROR 42S22: Unknown column 'MissingCol' in 'ORDER BY'
 UPDATE bug25126 SET val = 1 ORDER BY val, MissingCol;
-ERROR 42S22: Unknown column 'MissingCol' in 'order clause'
+ERROR 42S22: Unknown column 'MissingCol' in 'ORDER BY'
 UPDATE bug25126 SET val = MissingCol ORDER BY MissingCol;
-ERROR 42S22: Unknown column 'MissingCol' in 'order clause'
+ERROR 42S22: Unknown column 'MissingCol' in 'ORDER BY'
 UPDATE bug25126 SET MissingCol = 1 ORDER BY val, MissingCol;
-ERROR 42S22: Unknown column 'MissingCol' in 'field list'
+ERROR 42S22: Unknown column 'MissingCol' in 'SET'
 UPDATE bug25126 SET MissingCol = 1 ORDER BY MissingCol;
-ERROR 42S22: Unknown column 'MissingCol' in 'field list'
+ERROR 42S22: Unknown column 'MissingCol' in 'SET'
 UPDATE bug25126 SET MissingCol = val ORDER BY MissingCol;
-ERROR 42S22: Unknown column 'MissingCol' in 'field list'
+ERROR 42S22: Unknown column 'MissingCol' in 'SET'
 UPDATE bug25126 SET MissingCol = MissingCol ORDER BY MissingCol;
-ERROR 42S22: Unknown column 'MissingCol' in 'field list'
+ERROR 42S22: Unknown column 'MissingCol' in 'SET'
 DROP TABLE bug25126;
 CREATE TABLE t1 (a int);
 SELECT p.a AS val, q.a AS val1 FROM t1 p, t1 q ORDER BY val > 1;
 val	val1
 SELECT p.a AS val, q.a AS val FROM t1 p, t1 q ORDER BY val;
-ERROR 23000: Column 'val' in order clause is ambiguous
+ERROR 23000: Column 'val' in ORDER BY is ambiguous
 SELECT p.a AS val, q.a AS val FROM t1 p, t1 q ORDER BY val > 1;
-ERROR 23000: Column 'val' in order clause is ambiguous
+ERROR 23000: Column 'val' in ORDER BY is ambiguous
 DROP TABLE t1;
 CREATE TABLE t1 (a int);
 INSERT INTO t1 VALUES (3), (2), (4), (1);
@@ -1538,9 +1541,9 @@ INSERT INTO t1 (a) VALUES (1), (2);
 INSERT INTO t2 (a,b) VALUES (1,2), (2,3);
 INSERT INTO t3 (c) VALUES (1), (2);
 SELECT
-(SELECT t1.a FROM t1, t2 WHERE t1.a = t2.b AND t2.a = t3.c ORDER BY t1.a)
+(SELECT t1.a FROM t1, t2 WHERE t1.a = t2.b AND t2.a = t3.c ORDER BY t1.a) as exp
 FROM t3;
-(SELECT t1.a FROM t1, t2 WHERE t1.a = t2.b AND t2.a = t3.c ORDER BY t1.a)
+exp
 2
 NULL
 DROP TABLE t1, t2, t3;
@@ -1596,8 +1599,9 @@ ANALYZE
               "r_other_time_ms": "REPLACED",
               "r_engine_stats": REPLACED,
               "filtered": 50,
-              "r_filtered": 100,
+              "r_total_filtered": 100,
               "attached_condition": "t1.c = 10 or t1.c is null",
+              "r_filtered": 100,
               "using_index": true
             }
           }
@@ -3486,6 +3490,7 @@ ANALYZE
               "r_other_time_ms": "REPLACED",
               "r_engine_stats": REPLACED,
               "filtered": 100,
+              "r_total_filtered": 100,
               "r_filtered": 100
             }
           }
@@ -3761,6 +3766,151 @@ Note	1003	select `test`.`t4`.`a` AS `a`,`test`.`t4`.`b` AS `b`,`test`.`t4`.`c` A
 set histogram_size=@tmp_h, histogram_type=@tmp_ht, use_stat_tables=@tmp_u,
 optimizer_use_condition_selectivity=@tmp_o;
 drop table t1,t2,t3,t4;
+#
+# MDEV-32324: Server crashes inside filesort at my_decimal::to_binary
+#
+SELECT 1.000000 two UNION SELECT 1 ORDER BY ( SELECT two LIMIT 1 OFFSET 1 ) ;
+two
+1.000000
+# MDEV-32475: test_if_skip_sort_order() should catch the join types
+#             JT_EQ_REF, JT_CONST and JT_SYSTEM and skip sort order for these
+#
+CREATE TABLE t1 (a INT PRIMARY KEY, b INT, KEY(b));
+CREATE TABLE t2 (a INT, b INT);
+INSERT INTO t1 SELECT seq, seq+1 FROM seq_1_to_100;
+INSERT INTO t2 VALUES (0, 1),(1, 2);
+ANALYZE TABLE t1, t2 PERSISTENT FOR ALL;
+Table	Op	Msg_type	Msg_text
+test.t1	analyze	status	Engine-independent statistics collected
+test.t1	analyze	status	Table is already up to date
+test.t2	analyze	status	Engine-independent statistics collected
+test.t2	analyze	status	OK
+# Table t1 must use eq_ref, not index below:
+EXPLAIN SELECT (SELECT 1 FROM t1 WHERE t1.a=t2.b ORDER BY t1.b LIMIT 1) AS c FROM t2;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
+1	PRIMARY	t2	ALL	NULL	NULL	NULL	NULL	2	
+2	DEPENDENT SUBQUERY	t1	eq_ref	PRIMARY	PRIMARY	4	test.t2.b	1	Using where
+DROP TABLE t1,t2;
+#
+# MDEV-29681 Server crashes when optimizing SQL with ORDER BY
+#
+CREATE TABLE t1 (b INT);
+CREATE TABLE t2 (a INT, c INT);
+# First test empty tables
+EXPLAIN EXTENDED (SELECT * FROM t1 JOIN t2 ON a=b LIMIT 3) ORDER BY a+1;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	PRIMARY	<derived2>	system	NULL	NULL	NULL	NULL	0	0.00	Const row not found
+2	DERIVED	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	no matching row in const table
+Warnings:
+Note	1003	/* select#1 */ select NULL AS `b`,NULL AS `a`,NULL AS `c` from ((/* select#2 */ select NULL AS `b`,NULL AS `a`,NULL AS `c` from `test`.`t1` join `test`.`t2` where 0 limit 3)) `__2` order by NULL + 1
+EXPLAIN EXTENDED (SELECT * FROM t1 JOIN t2 ON a=b LIMIT 3) ORDER BY a=2;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	PRIMARY	<derived2>	system	NULL	NULL	NULL	NULL	0	0.00	Const row not found
+2	DERIVED	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	no matching row in const table
+Warnings:
+Note	1003	/* select#1 */ select NULL AS `b`,NULL AS `a`,NULL AS `c` from ((/* select#2 */ select NULL AS `b`,NULL AS `a`,NULL AS `c` from `test`.`t1` join `test`.`t2` where 0 limit 3)) `__2` order by NULL = 2
+EXPLAIN EXTENDED (SELECT * FROM t1 JOIN t2 ON a=b LIMIT 3)
+ORDER BY a+1, a-b DESC, c<>a;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	PRIMARY	<derived2>	system	NULL	NULL	NULL	NULL	0	0.00	Const row not found
+2	DERIVED	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	no matching row in const table
+Warnings:
+Note	1003	/* select#1 */ select NULL AS `b`,NULL AS `a`,NULL AS `c` from ((/* select#2 */ select NULL AS `b`,NULL AS `a`,NULL AS `c` from `test`.`t1` join `test`.`t2` where 0 limit 3)) `__2` order by NULL + 1,NULL - NULL desc,NULL <> NULL
+# Insert some data
+INSERT INTO t1 VALUES (1),(2),(3),(4);
+INSERT INTO t2 VALUES (1,1),(2,2),(3,3),(4,4);
+(SELECT * FROM t1 JOIN t2 ON a=b LIMIT 3) ORDER BY a=b, a-10 DESC, b+a, c+a+a+b;
+b	a	c
+1	1	1
+2	2	2
+3	3	3
+(SELECT * FROM t1 JOIN t2 ON a=b LIMIT 3) ORDER BY a=2;
+b	a	c
+1	1	1
+2	2	2
+3	3	3
+EXPLAIN EXTENDED (SELECT * FROM t1 JOIN t2 ON a=b LIMIT 3)
+ORDER BY a=b, a-10, b+a, c+a+a+b;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	PRIMARY	<derived2>	ALL	NULL	NULL	NULL	NULL	3	100.00	Using filesort
+2	DERIVED	t1	ALL	NULL	NULL	NULL	NULL	4	100.00	
+2	DERIVED	t2	ALL	NULL	NULL	NULL	NULL	4	100.00	Using where; Using join buffer (flat, BNL join)
+Warnings:
+Note	1003	/* select#1 */ select `__2`.`b` AS `b`,`__2`.`a` AS `a`,`__2`.`c` AS `c` from ((/* select#2 */ select `test`.`t1`.`b` AS `b`,`test`.`t2`.`a` AS `a`,`test`.`t2`.`c` AS `c` from `test`.`t1` join `test`.`t2` where `test`.`t2`.`a` = `test`.`t1`.`b` limit 3)) `__2` order by `__2`.`a` = `__2`.`b`,`__2`.`a` - 10,`__2`.`b` + `__2`.`a`,`__2`.`c` + `__2`.`a` + `__2`.`a` + `__2`.`b`
+# When there is no LIMIT clause the derived table must be merged
+(SELECT * FROM t1 JOIN t2 ON a=b) ORDER BY a+16, b+a, c<>b;
+b	a	c
+1	1	1
+2	2	2
+3	3	3
+4	4	4
+EXPLAIN EXTENDED (SELECT * FROM t1 JOIN t2 ON a=b) ORDER BY a+16 DESC, b+a, c<>b;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	SIMPLE	t1	ALL	NULL	NULL	NULL	NULL	4	100.00	Using temporary; Using filesort
+1	SIMPLE	t2	ALL	NULL	NULL	NULL	NULL	4	100.00	Using where; Using join buffer (flat, BNL join)
+Warnings:
+Note	1003	(select `test`.`t1`.`b` AS `b`,`test`.`t2`.`a` AS `a`,`test`.`t2`.`c` AS `c` from `test`.`t1` join `test`.`t2` where `test`.`t2`.`a` = `test`.`t1`.`b` order by `test`.`t2`.`a` + 16 desc,`test`.`t1`.`b` + `test`.`t2`.`a`,`test`.`t2`.`c` <> `test`.`t1`.`b`)
+# Test UNIONs:
+(SELECT * FROM t1 JOIN t2 ON a=b UNION
+SELECT * FROM t1 JOIN t2 ON a!=b
+LIMIT 3)
+ORDER BY a+16, b+a, c<>b;
+b	a	c
+1	1	1
+2	2	2
+3	3	3
+EXPLAIN EXTENDED (SELECT * FROM t1 JOIN t2 ON a=b UNION
+SELECT * FROM t1 JOIN t2 ON a!=b
+LIMIT 3)
+ORDER BY a+16, b+a, c<>b;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	PRIMARY	<derived2>	ALL	NULL	NULL	NULL	NULL	32	100.00	Using filesort
+2	DERIVED	t1	ALL	NULL	NULL	NULL	NULL	4	100.00	
+2	DERIVED	t2	ALL	NULL	NULL	NULL	NULL	4	100.00	Using where; Using join buffer (flat, BNL join)
+3	UNION	t1	ALL	NULL	NULL	NULL	NULL	4	100.00	
+3	UNION	t2	ALL	NULL	NULL	NULL	NULL	4	100.00	Using where; Using join buffer (flat, BNL join)
+NULL	UNION RESULT	<union2,3>	ALL	NULL	NULL	NULL	NULL	NULL	NULL	
+Warnings:
+Note	1003	/* select#1 */ select `__3`.`b` AS `b`,`__3`.`a` AS `a`,`__3`.`c` AS `c` from (/* select#2 */ select `test`.`t1`.`b` AS `b`,`test`.`t2`.`a` AS `a`,`test`.`t2`.`c` AS `c` from `test`.`t1` join `test`.`t2` where `test`.`t2`.`a` = `test`.`t1`.`b` union /* select#3 */ select `test`.`t1`.`b` AS `b`,`test`.`t2`.`a` AS `a`,`test`.`t2`.`c` AS `c` from `test`.`t1` join `test`.`t2` where `test`.`t2`.`a` <> `test`.`t1`.`b` limit 3) `__3` order by `__3`.`a` + 16,`__3`.`b` + `__3`.`a`,`__3`.`c` <> `__3`.`b`
+(SELECT * FROM t1 JOIN t2 ON a=b UNION
+SELECT NULL, NULL, NULL
+LIMIT 3)
+ORDER BY b-a-c;
+b	a	c
+1	1	1
+2	2	2
+3	3	3
+EXPLAIN EXTENDED (SELECT * FROM t1 JOIN t2 ON a=b UNION
+SELECT NULL, NULL, NULL
+LIMIT 3)
+ORDER BY b-a-c;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	PRIMARY	<derived2>	ALL	NULL	NULL	NULL	NULL	16	100.00	Using filesort
+2	DERIVED	t1	ALL	NULL	NULL	NULL	NULL	4	100.00	
+2	DERIVED	t2	ALL	NULL	NULL	NULL	NULL	4	100.00	Using where; Using join buffer (flat, BNL join)
+3	UNION	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	No tables used
+NULL	UNION RESULT	<union2,3>	ALL	NULL	NULL	NULL	NULL	NULL	NULL	
+Warnings:
+Note	1003	/* select#1 */ select `__3`.`b` AS `b`,`__3`.`a` AS `a`,`__3`.`c` AS `c` from (/* select#2 */ select `test`.`t1`.`b` AS `b`,`test`.`t2`.`a` AS `a`,`test`.`t2`.`c` AS `c` from `test`.`t1` join `test`.`t2` where `test`.`t2`.`a` = `test`.`t1`.`b` union /* select#3 */ select NULL AS `NULL`,NULL AS `NULL`,NULL AS `NULL` limit 3) `__3` order by `__3`.`b` - `__3`.`a` - `__3`.`c`
+(SELECT * FROM t1 JOIN t2 ON a=b UNION
+SELECT NULL, NULL, NULL
+ORDER BY a LIMIT 3)
+ORDER BY b-a-c LIMIT 1;
+b	a	c
+NULL	NULL	NULL
+EXPLAIN EXTENDED (SELECT * FROM t1 JOIN t2 ON a=b UNION
+SELECT NULL, NULL, NULL
+ORDER BY a LIMIT 3)
+ORDER BY b-a-c LIMIT 1;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	PRIMARY	<derived2>	ALL	NULL	NULL	NULL	NULL	16	100.00	Using filesort
+2	DERIVED	t1	ALL	NULL	NULL	NULL	NULL	4	100.00	
+2	DERIVED	t2	ALL	NULL	NULL	NULL	NULL	4	100.00	Using where; Using join buffer (flat, BNL join)
+3	UNION	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	No tables used
+NULL	UNION RESULT	<union2,3>	ALL	NULL	NULL	NULL	NULL	NULL	NULL	Using filesort
+Warnings:
+Note	1003	/* select#1 */ select `__3`.`b` AS `b`,`__3`.`a` AS `a`,`__3`.`c` AS `c` from (/* select#2 */ select `test`.`t1`.`b` AS `b`,`test`.`t2`.`a` AS `a`,`test`.`t2`.`c` AS `c` from `test`.`t1` join `test`.`t2` where `test`.`t2`.`a` = `test`.`t1`.`b` union /* select#3 */ select NULL AS `NULL`,NULL AS `NULL`,NULL AS `NULL` order by `a` limit 3) `__3` order by `__3`.`b` - `__3`.`a` - `__3`.`c` limit 1
+DROP TABLE t1, t2;
 # End of 10.4 tests
 #
 # MDEV-21655: Server crashes in my_qsort2 / Filesort_buffer::sort_buffer
@@ -3839,6 +3989,7 @@ ANALYZE
               "r_other_time_ms": "REPLACED",
               "r_engine_stats": REPLACED,
               "filtered": 100,
+              "r_total_filtered": 100,
               "r_filtered": 100
             }
           }
@@ -3973,6 +4124,8 @@ a	substr(b, @save_max_sort_length+1)
 3	ABE
 2	AB
 1	A
+Warnings:
+Warning	4202	5 values were longer than max_sort_length. Sorting used only the first 1024 bytes
 analyze format=json
 select a, substr(b, @save_max_sort_length+1) from t1 order by b desc;
 ANALYZE
@@ -4009,6 +4162,7 @@ ANALYZE
               "r_other_time_ms": "REPLACED",
               "r_engine_stats": REPLACED,
               "filtered": 100,
+              "r_total_filtered": 100,
               "r_filtered": 100
             }
           }
@@ -4017,6 +4171,8 @@ ANALYZE
     ]
   }
 }
+Warnings:
+Warning	4202	5 values were longer than max_sort_length. Sorting used only the first 1024 bytes
 drop table t1;
 #
 # Packing sort keys with complex collations
@@ -4062,6 +4218,7 @@ ANALYZE
               "r_other_time_ms": "REPLACED",
               "r_engine_stats": REPLACED,
               "filtered": 100,
+              "r_total_filtered": 100,
               "r_filtered": 100
             }
           }
@@ -4121,6 +4278,7 @@ ANALYZE
               "r_other_time_ms": "REPLACED",
               "r_engine_stats": REPLACED,
               "filtered": 100,
+              "r_total_filtered": 100,
               "r_filtered": 100
             }
           }
@@ -4142,7 +4300,7 @@ drop table t1;
 #
 # MDEV-21922: Allow packing addon fields even if they don't honour max_length_for_sort_data
 #
-create table t1 (a varchar(200) character set utf8, b int);
+create table t1 (a varchar(200) character set utf8 collate utf8_general_ci, b int);
 insert into t1 select seq, seq from seq_1_to_10;
 select * from t1 order by a;
 a	b
@@ -4194,6 +4352,7 @@ ANALYZE
               "r_other_time_ms": "REPLACED",
               "r_engine_stats": REPLACED,
               "filtered": 100,
+              "r_total_filtered": 100,
               "r_filtered": 100
             }
           }
@@ -4301,6 +4460,8 @@ CREATE TABLE t1(a VARCHAR(1027), b INT);
 INSERT INTO t1 SELECT seq, seq from seq_1_to_34;
 SET @save_tmp_memory_table_size= @@tmp_memory_table_size;
 SET tmp_memory_table_size= 1056*2;
+Warnings:
+Warning	1292	Truncated incorrect tmp_memory_table_size value: '2112'
 SELECT COUNT(DISTINCT a) FROM t1;
 COUNT(DISTINCT a)
 34
@@ -4370,6 +4531,7 @@ ANALYZE
           "r_other_time_ms": "REPLACED",
           "r_engine_stats": REPLACED,
           "filtered": 100,
+          "r_total_filtered": 100,
           "r_filtered": 100
         }
       }
@@ -4407,8 +4569,9 @@ ANALYZE
                       "r_other_time_ms": "REPLACED",
                       "r_engine_stats": REPLACED,
                       "filtered": 100,
-                      "r_filtered": 2,
-                      "attached_condition": "t1.b = t2.b"
+                      "r_total_filtered": 2,
+                      "attached_condition": "t1.b = t2.b",
+                      "r_filtered": 2
                     }
                   }
                 ]
@@ -4676,3 +4839,4 @@ a	b	c
 6	2	26
 6	3	36
 drop table t1;
+ALTER DATABASE test CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci;

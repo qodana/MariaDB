@@ -1392,7 +1392,7 @@ uint _ma_get_binary_pack_key(MARIA_KEY *int_key, uint page_flag, uint nod_flag,
 }
 
 /**
-  skip key which is ptefix packed against previous key
+  skip key which is prefix packed against previous key
 
   @fn _ma_skip_binary_key()
   @param key       Keyinfo and buffer that can be used
@@ -1931,7 +1931,7 @@ _ma_calc_var_pack_key_length(const MARIA_KEY *int_key, uint nod_flag,
   key_length= int_key->data_length + int_key->ref_length + nod_flag;
 
   sort_order=0;
-  if ((keyinfo->flag & HA_FULLTEXT) &&
+  if ((keyinfo->key_alg == HA_KEY_ALG_FULLTEXT) &&
       ((keyseg->type == HA_KEYTYPE_TEXT) ||
        (keyseg->type == HA_KEYTYPE_VARTEXT1) ||
        (keyseg->type == HA_KEYTYPE_VARTEXT2)) &&

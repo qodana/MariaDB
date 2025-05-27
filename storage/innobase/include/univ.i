@@ -2,13 +2,6 @@
 
 Copyright (c) 1994, 2016, Oracle and/or its affiliates. All Rights Reserved.
 Copyright (c) 2013, 2023, MariaDB Corporation.
-Copyright (c) 2008, Google Inc.
-
-Portions of this file contain modifications contributed and copyrighted by
-Google, Inc. Those modifications are gratefully acknowledged and are described
-briefly in the InnoDB documentation. The contributions by Google are
-incorporated with their permission, and subject to the conditions contained in
-the file COPYING.Google.
 
 This program is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free Software
@@ -141,7 +134,6 @@ using the call command. */
 						ut_ad(lock_rec_validate_page())
 						assertions. */
 #define UNIV_LRU_DEBUG				/* debug the buffer pool LRU */
-#define UNIV_HASH_DEBUG				/* debug HASH_ macros */
 #define UNIV_PERF_DEBUG                         /* debug flag that enables
                                                 light weight performance
                                                 related stuff. */
@@ -205,7 +197,7 @@ and 2 bits for flags. This limits the uncompressed page size to 16k.
 /* Define the Min, Max, Default page sizes. */
 /** Minimum Page Size Shift (power of 2) */
 #define UNIV_PAGE_SIZE_SHIFT_MIN	12U
-/** log2 of largest page size (1<<16 == 64436 bytes). */
+/** log2 of largest page size (1<<16 == 65536 bytes). */
 /** Maximum Page Size Shift (power of 2) */
 #define UNIV_PAGE_SIZE_SHIFT_MAX	16U
 /** log2 of default page size (1<<14 == 16384 bytes). */
@@ -268,7 +260,7 @@ database name and table name. In addition, 14 bytes is added for:
 #define MAX_FULL_NAME_LEN				\
 	(MAX_TABLE_NAME_LEN + MAX_DATABASE_NAME_LEN + 14)
 
-/** Maximum length of the compression alogrithm string. Currently we support
+/** Maximum length of the compression algorithm string. Currently we support
 only (NONE | ZLIB | LZ4). */
 #define MAX_COMPRESSION_LEN     4
 

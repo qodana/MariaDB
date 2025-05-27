@@ -91,7 +91,7 @@ set debug_sync= 'RESET';
 create table t1 (c1 int);
 
 --echo # 
---echo # A) First let us check compatibility rules between differend kinds of
+--echo # A) First let us check compatibility rules between different kinds of
 --echo #    type-of-operation aware metadata locks.
 --echo #    Of course, these rules are already covered by the tests scattered
 --echo #    across the test suite. But it still makes sense to have one place
@@ -2450,7 +2450,7 @@ connection deadlock_con2;
 set debug_sync='now WAIT_FOR parked2';
 --echo # Resume ALTER execution. Eventually it will release its
 --echo # metadata lock and INSERT's request for SW lock will be
---echo # satisified.
+--echo # satisfied.
 set debug_sync='now SIGNAL go1';
 
 --echo #
@@ -3085,6 +3085,7 @@ connection con2;
 SET DEBUG_SYNC= 'now WAIT_FOR table_opened';
 --echo # Check that FLUSH must wait to get the GRL
 --echo # and let DROP PROCEDURE continue
+--source ../suite/innodb/include/wait_all_purged.inc
 SELECT LOCK_MODE, LOCK_TYPE, TABLE_SCHEMA, TABLE_NAME FROM information_schema.metadata_lock_info;
 SET DEBUG_SYNC= 'mdl_acquire_lock_wait SIGNAL grlwait';
 --send FLUSH TABLES WITH READ LOCK
@@ -3110,9 +3111,15 @@ SET DEBUG_SYNC= 'RESET';
 --echo #
 
 create table t1 (a int) engine=myisam;
-create table t2 (a int) engine=innodb;
+create table t2 (a int) stats_persistent=0, engine=innodb;
 insert into t1 values (1);
 insert into t2 values (1);
+
+connect (con1, localhost, root);
+# disable innodb purge thread, otherwise it might start purging t2,
+# and will take an mdl, affecting metadata_lock_info output.
+start transaction with consistent snapshot;
+connection default;
 
 SET DEBUG_SYNC= 'after_open_table_mdl_shared SIGNAL table_opened WAIT_FOR grlwait execute 2';
 --send update t1,t2 set t1.a=2,t2.a=3
@@ -3159,13 +3166,14 @@ connection default;
 SET DEBUG_SYNC= 'RESET';
 drop table t1,t2;
 disconnect con2;
+disconnect con1;
 
 --echo #
 --echo # Bug#50786 Assertion `thd->mdl_context.trans_sentinel() == __null' 
 --echo #           failed in open_ltable()
 --echo #
 
---echo # Supress warnings written to the log file
+--echo # Suppress warnings written to the log file
 call mtr.add_suppression("Wait on a lock was aborted due to a pending exclusive lock");
 
 connect (con1,localhost,root);

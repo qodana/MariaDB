@@ -23,9 +23,9 @@ ${CMAKE_SOURCE_DIR}/libmysqld
 ${CMAKE_SOURCE_DIR}/sql
 ${CMAKE_SOURCE_DIR}/tpool
 ${CMAKE_BINARY_DIR}/sql 
-${PCRE_INCLUDES}
+${PCRE_INCLUDE_DIRS}
 ${LIBFMT_INCLUDE_DIR}
-${ZLIB_INCLUDE_DIR}
+${ZLIB_INCLUDE_DIRS}
 ${SSL_INCLUDE_DIRS}
 ${SSL_INTERNAL_INCLUDE_DIRS}
 )
@@ -51,6 +51,7 @@ ENDIF()
 SET(SQL_EMBEDDED_SOURCES emb_qcache.cc libmysqld.c lib_sql.cc 
            libmysql.c ../sql-common/errmsg.c
            ../sql-common/client.c
+           ../sql/cset_narrowing.cc
            ../sql-common/my_user.c ../sql-common/pack.c
            ../sql-common/client_plugin.c
            ../sql/password.c ../sql/discover.cc ../sql/derror.cc 
@@ -66,13 +67,16 @@ SET(SQL_EMBEDDED_SOURCES emb_qcache.cc libmysqld.c lib_sql.cc
            ../sql/item_subselect.cc ../sql/item_sum.cc ../sql/item_timefunc.cc 
            ../sql/item_xmlfunc.cc ../sql/item_jsonfunc.cc
            ../sql/json_schema.cc ../sql/json_schema_helper.cc
-           ../sql/key.cc ../sql/lock.cc ../sql/log.cc 
+           ../sql/key.cc ../sql/lock.cc ../sql/log.cc ../sql/log_cache.cc
            ../sql/log_event.cc ../sql/log_event_server.cc 
            ../sql/mf_iocache.cc ../sql/my_decimal.cc 
            ../sql/net_serv.cc ../sql/opt_range.cc
+           ../sql/opt_group_by_cardinality.cc
            ../sql/opt_rewrite_date_cmp.cc
            ../sql/opt_rewrite_remove_casefold.cc
+           ../sql/opt_sargable_left.cc
            ../sql/opt_sum.cc
+           ../sql/opt_vcol_substitution.cc
            ../sql/parse_file.cc ../sql/procedure.cc ../sql/protocol.cc 
            ../sql/records.cc ../sql/repl_failsafe.cc ../sql/rpl_filter.cc
            ../sql/rpl_record.cc ../sql/des_key_file.cc
@@ -100,7 +104,7 @@ SET(SQL_EMBEDDED_SOURCES emb_qcache.cc libmysqld.c lib_sql.cc
            ../sql/sql_show.cc ../sql/sql_state.c 
            ../sql/sql_statistics.cc ../sql/sql_string.cc
            ../sql/sql_table.cc ../sql/sql_test.cc
-           ../sql/ddl_log.cc
+           ../sql/ddl_log.cc ../sql/item_vectorfunc.cc
            ../sql/sql_trigger.cc ../sql/sql_udf.cc ../sql/sql_union.cc
            ../sql/sql_update.cc ../sql/sql_view.cc ../sql/sql_profile.cc
            ../sql/gcalc_tools.cc ../sql/gcalc_slicescan.cc
@@ -111,7 +115,7 @@ SET(SQL_EMBEDDED_SOURCES emb_qcache.cc libmysqld.c lib_sql.cc
            ../sql/sql_alter.cc ../sql/sql_partition_admin.cc
            ../sql/event_parse_data.cc
            ../sql/sql_signal.cc
-           ../sql/sys_vars.cc
+           ../sql/sys_vars.cc ../sql/vector_mhnsw.cc
            ${CMAKE_BINARY_DIR}/sql/sql_builtin.cc
            ../sql/mdl.cc ../sql/transaction.cc
            ../sql/sql_join_cache.cc
@@ -125,7 +129,7 @@ SET(SQL_EMBEDDED_SOURCES emb_qcache.cc libmysqld.c lib_sql.cc
            ../sql/sql_expression_cache.cc
            ../sql/my_apc.cc ../sql/my_apc.h
            ../sql/my_json_writer.cc ../sql/my_json_writer.h
-	   ../sql/rpl_gtid.cc
+	   ../sql/rpl_gtid.cc ../sql/gtid_index.cc
            ../sql/sql_explain.cc ../sql/sql_explain.h
            ../sql/sql_analyze_stmt.cc ../sql/sql_analyze_stmt.h
            ../sql/compat56.cc
@@ -135,7 +139,7 @@ SET(SQL_EMBEDDED_SOURCES emb_qcache.cc libmysqld.c lib_sql.cc
            ../sql/sql_mode.cc
            ../sql/sql_type_string.cc
            ../sql/sql_type_json.cc
-           ../sql/sql_type_geom.cc
+           ../sql/sql_type_geom.cc ../sql/sql_type_vector.cc
            ../sql/table_cache.cc ../sql/mf_iocache_encr.cc
            ../sql/wsrep_dummy.cc ../sql/encryption.cc
            ../sql/item_windowfunc.cc ../sql/sql_window.cc
@@ -153,6 +157,10 @@ SET(SQL_EMBEDDED_SOURCES emb_qcache.cc libmysqld.c lib_sql.cc
            ../sql/json_table.cc
            ../sql/opt_histogram_json.cc
            ../sql/sp_instr.cc
+           ../sql/sp_cursor.cc
+           ../sql/opt_hints_parser.cc ../sql/opt_hints_parser.h
+           ../sql/scan_char.h
+           ../sql/opt_hints.cc ../sql/opt_hints.h
            ${GEN_SOURCES}
            ${MYSYS_LIBWRAP_SOURCE}
 )
@@ -184,7 +192,7 @@ ENDIF()
 
 SET(LIBS 
   dbug strings mysys mysys_ssl pcre2-8 vio
-  ${ZLIB_LIBRARY} ${SSL_LIBRARIES} 
+  ${ZLIB_LIBRARIES} ${SSL_LIBRARIES}
   ${LIBWRAP} ${LIBCRYPT} ${CMAKE_DL_LIBS}
   ${EMBEDDED_PLUGIN_LIBS}
   sql_embedded

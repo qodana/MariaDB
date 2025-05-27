@@ -57,9 +57,11 @@ select a, oref, a in (
 create table t3 (a int);
 insert into t3 values (NULL), (NULL);
 flush status;
+--disable_cursor_protocol
 --disable_ps2_protocol
 select a in (select max(ie) from t1 where oref=4 group by grp) from t3;
 --enable_ps2_protocol
+--enable_cursor_protocol
 show status like 'Handler_read_rnd_next';
 select ' ^ This must show 11' Z;
 
@@ -96,7 +98,9 @@ select oref, a, a in (select a from t1 where oref=t2.oref) Z from t2;
 
 --disable_ps2_protocol
 flush status;
+--disable_cursor_protocol
 select oref, a from t2 where a in (select a from t1 where oref=t2.oref);
+--enable_cursor_protocol
 # This will only show access to t2:
 show status like '%Handler_read_rnd_next';
 
@@ -106,7 +110,9 @@ insert into t2 values (NULL, 0),(NULL, 0), (NULL, 0), (NULL, 0);
 
 set optimizer_switch='subquery_cache=off';
 flush status;
+--disable_cursor_protocol
 select oref, a, a in (select a from t1 where oref=t2.oref) Z from t2;
+--enable_cursor_protocol
 show status like '%Handler_read%';
 select 'No key lookups, seq reads: 29= 5 reads from t2 + 4 * 6 reads from t1.' Z;
 set @@optimizer_switch=@save_optimizer_switch;
@@ -249,7 +255,7 @@ drop table t1,t2,t3,t4;
 --echo # More tests for tricky multi-column cases, where some of pushed-down
 --echo # equalities are used for index lookups and some are not.
 
-create table t1 (oref char(4), grp int, ie1 int, ie2 int);
+create table t1 (oref char(4), grp int, ie1 int, ie2 int) charset=latin1;
 insert into t1 (oref, grp, ie1, ie2) values
  ('aa', 10, 2, 1),
  ('aa', 10, 1, 1),
@@ -263,7 +269,7 @@ insert into t1 (oref, grp, ie1, ie2) values
  
  ('ff', 20, 2, 2),
  ('ff', 20, 1, 2);
-create table t2 (oref char(4), a int, b int);
+create table t2 (oref char(4), a int, b int) charset=latin1;
 insert into t2 values 
   ('ee', NULL, 1),
   ('bb', 2, 1),
@@ -285,7 +291,7 @@ select oref, a, b, (a,b) in (select ie1,ie2 from t1 where oref=t2.oref) Z from t
 drop table t1, t2;
 
 # Now test different column types:
-create table t1 (oref char(4), grp int, ie int);
+create table t1 (oref char(4), grp int, ie int) charset=latin1;
 insert into t1 (oref, grp, ie) values
  ('aa', 10, 2),
  ('aa', 10, 1),
@@ -302,7 +308,7 @@ insert into t1 (oref, grp, ie) values
  ('ff', 20, 2),
  ('ff', 20, 1);
 
-create table t2 (oref char(4), a int);
+create table t2 (oref char(4), a int) charset=latin1;
 insert into t2 values 
   ('ee', NULL),
   ('bb', 2),
@@ -450,7 +456,7 @@ select oref, a, b, (a,b) in (select ie1,ie2 from t1 where oref=t2.oref) Z from t
 
 drop table t1,t2;
 
-create table t1 (oref char(4), grp int, ie int primary key);
+create table t1 (oref char(4), grp int, ie int primary key) charset=latin1;
 insert into t1 (oref, grp, ie) values
  ('aa', 10, 2),
  ('aa', 10, 1),
@@ -461,7 +467,7 @@ insert into t1 (oref, grp, ie) values
  ('cc', 20, 5),
  ('cc', 10, 6);
  
-create table t2 (oref char(4), a int);
+create table t2 (oref char(4), a int) charset=latin1;
 insert into t2 values 
   ('ee', NULL),
   ('bb', 2),
@@ -645,15 +651,13 @@ DROP TABLE t1, t2;
 
 create table t1 (a int, b decimal(13, 3)); 
 insert into t1 values (1, 0.123);
---disable_ps2_protocol
-select a, (select max(b) from t1) into outfile "subselect.out.file.1" from t1;
---enable_ps2_protocol
+select a, (select max(b) from t1) into outfile "../../tmp/subselect.out.file.1" from t1;
 delete from t1;
-load data infile "subselect.out.file.1" into table t1;
+load data infile "../../tmp/subselect.out.file.1" into table t1;
 select * from t1;
 drop table t1;
 let $datadir=`select @@datadir`;
---remove_file $datadir/test/subselect.out.file.1
+--remove_file $MYSQLTEST_VARDIR/tmp/subselect.out.file.1
 
 #
 # Bug #37894: Assertion in init_read_record_seq in handler.h line 1444
@@ -699,6 +703,8 @@ SELECT a AS x, ROW(11, 12) = (SELECT MAX(x), 12), ROW(11, 12) IN (SELECT MAX(x),
 
 DROP TABLE t1;
 
+#enable after fix MDEV-31728
+--disable_cursor_protocol
 #enable after fix MDEV-28585
 --disable_view_protocol
 --echo # both columns should be same
@@ -709,6 +715,7 @@ SELECT ROW(1,2) = (SELECT NULL,    1), ROW(1,2) IN (SELECT NULL,    1);
 SELECT ROW(1,2) = (SELECT    1,    1), ROW(1,2) IN (SELECT    1,    1);
 SELECT ROW(1,2) = (SELECT    1,    2), ROW(1,2) IN (SELECT    1,    2);
 --enable_view_protocol
+--enable_cursor_protocol
 
 #
 # Bug #37362      Crash in do_field_eq
@@ -816,11 +823,13 @@ set @save_optimizer_switch2=@@optimizer_switch;
 set optimizer_switch='subquery_cache=off';
 
 --disable_ps2_protocol
+--disable_cursor_protocol
 --echo 
 SELECT i1, i2
 FROM t1
 WHERE (i1, i2) 
       NOT IN (SELECT i1, i2 FROM t2);
+--enable_cursor_protocol
 
 --echo 
 --echo # Check that the subquery only has to be evaluated once 
@@ -832,11 +841,13 @@ SHOW STATUS LIKE '%Handler_read_rnd_next';
 INSERT INTO t1 VALUES (NULL, NULL); 
 FLUSH STATUS;
 
+--disable_cursor_protocol
 --echo 
 SELECT i1, i2
 FROM t1
 WHERE (i1, i2) 
       NOT IN (SELECT i1, i2 FROM t2);
+--enable_cursor_protocol
 
 --echo 
 --echo # Handler_read_rnd_next should be one more than baseline 
@@ -982,10 +993,12 @@ set @@max_heap_table_size= 16384;
 explain select count(*) from t0 A, t0 B, t0 C, t0 D where D.a in (select a from t1 E where a+1 < 10000 + A.a + B.a +C.a+D.a);
 flush status;
 --disable_ps2_protocol
+--disable_cursor_protocol
 select count(*) from t0 A, t0 B, t0 C, t0 D where D.a in (select a from t1 E where a+1 < 10000 + A.a + B.a +C.a+D.a);
 --enable_ps2_protocol
 show status like 'Created_tmp_disk_tables';
-set @save_max_heap_table_size=@@max_heap_table_size;
+--enable_cursor_protocol
+set @@max_heap_table_size=@save_max_heap_table_size;
 set @@optimizer_switch=@save_optimizer_switch;
 drop table t0, t1;
 
@@ -1137,6 +1150,7 @@ set @@optimizer_switch=@save_optimizer_switch;
 --echo
 --echo BUG#37842: Assertion in DsMrr_impl::dsmrr_init, at handler.cc:4307
 --echo
+
 CREATE TABLE t1 (
   `pk` int(11) NOT NULL AUTO_INCREMENT,
   `int_key` int(11) DEFAULT NULL,
@@ -1185,7 +1199,7 @@ create table t3 (
   idAddress int primary key,
   idContact int,
   postalStripped varchar(100)
-);
+) charset=latin1;
 
 insert into t3 values (1,1, 'foo'), (2,2,'T2H3B2');
 

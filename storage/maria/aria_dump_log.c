@@ -35,7 +35,7 @@ static File handler= -1;
 static my_bool opt_unit= 0;
 static struct my_option my_long_options[] =
 {
-#ifdef IMPLTMENTED
+#ifdef IMPLEMENTED
   {"body", 'b',
    "Print chunk body dump",
    (uchar **) &opt_body, (uchar **) &opt_body, 0,
@@ -55,8 +55,7 @@ static struct my_option my_long_options[] =
   { "pages", 'n', "Number of pages to read",
     (uchar**) &opt_pages, (uchar**) &opt_pages, 0,
     GET_ULONG, REQUIRED_ARG, (long) ~(ulong) 0,
-    (long) 1, (long) ~(ulong) 0, (long) 0,
-    (long) 1, 0},
+    (long) 1, (long) ~(ulong) 0, 0, (long) 1, 0},
   {"unit-test", 'U',
    "Use unit test record table (for logs created by unittests",
    (uchar **) &opt_unit, (uchar **) &opt_unit, 0,

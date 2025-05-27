@@ -2,6 +2,12 @@
 --source include/count_sessions.inc
 --source include/have_debug_sync.inc
 
+--source include/innodb_stable_estimates.inc
+
+--disable_query_log
+call mtr.add_suppression("InnoDB: Transaction was aborted due to ");
+--enable_query_log
+
 CREATE TABLE t1 (
  pk INT,
  f1 VARCHAR(10) NOT NULL,

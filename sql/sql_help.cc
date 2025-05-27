@@ -226,7 +226,7 @@ int search_topics(THD *thd, TABLE *topics, struct st_find_field *find_fields,
 
   while (!read_record_info.read_record())
   {
-    if (!select->cond->val_int())		// Doesn't match like
+    if (!select->cond->val_bool())		// Doesn't match like
       continue;
     memorize_variant_topic(thd,topics,count,find_fields,
 			   names,name,description,example);
@@ -270,7 +270,7 @@ int search_keyword(THD *thd, TABLE *keywords,
 
   while (!read_record_info.read_record() && count<2)
   {
-    if (!select->cond->val_int())		// Dosn't match like
+    if (!select->cond->val_bool())		// Doesn't match like
       continue;
 
     *key_id= (int)find_fields[help_keyword_help_keyword_id].field->val_int();
@@ -404,7 +404,7 @@ int search_categories(THD *thd, TABLE *categories,
     DBUG_RETURN(0);
   while (!read_record_info.read_record())
   {
-    if (select && !select->cond->val_int())
+    if (select && !select->cond->val_bool())
       continue;
     String *lname= new (thd->mem_root) String;
     get_field(thd->mem_root,pfname,lname);
@@ -442,7 +442,7 @@ void get_all_items_for_category(THD *thd, TABLE *items, Field *pfname,
 
   while (!read_record_info.read_record())
   {
-    if (!select->cond->val_int())
+    if (!select->cond->val_bool())
       continue;
     String *name= new (thd->mem_root) String();
     get_field(thd->mem_root,pfname,name);
@@ -515,7 +515,7 @@ static bool send_answer_1_metadata(Protocol *protocol)
   RETURN VALUES
     1		Writing of head failed
     -1		Writing of row failed
-    0		Successeful send
+    0		Successful send
 */
 
 static int send_answer_1(Protocol *protocol, String *s1, String *s2, String *s3)
@@ -631,7 +631,7 @@ extern "C" int string_ptr_cmp(const void* ptr1, const void* ptr2)
 
   RETURN VALUES
     -1 	Writing fail
-    0	Data was successefully send
+    0	Data was successfully send
 */
 
 int send_variant_2_list(MEM_ROOT *mem_root, Protocol *protocol,
@@ -693,7 +693,7 @@ SQL_SELECT *prepare_simple_select(THD *thd, Item *cond,
   SQL_SELECT *res= make_select(table, 0, 0, cond, 0, 0, error);
   if (unlikely(!res) || unlikely(*error))
     goto error;
-  (void) res->check_quick(thd, 0, HA_POS_ERROR);
+  (void) res->check_quick(thd, 0, HA_POS_ERROR, Item_func::BITMAP_ALL);
   if (!res->quick || res->quick->reset() == 0)
     return res;
 

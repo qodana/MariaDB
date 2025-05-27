@@ -126,8 +126,10 @@ get_make_parallel_flag
 # SSL library to use.--with-ssl will select our bundled yaSSL
 # implementation of SSL. --with-ssl=yes will first try system library
 # then the bundled one  --with-ssl=system will use the system library.
-# We use bundled by default as this is guaranteed to work with Galera
-SSL_LIBRARY=--with-ssl=bundled
+# We normally use bundled by default as this is guaranteed to work with Galera
+# However as bundled gives problem on SuSE with tls_version1.test, system
+# is used
+SSL_LIBRARY=--with-ssl=system
 
 if [ "x$warning_mode" = "xpedantic" ]; then
   warnings="-W -Wall -ansi -pedantic -Wno-long-long -Wno-unused -D_POSIX_SOURCE"
@@ -263,6 +265,12 @@ if test `$CC -v 2>&1 | tail -1 | sed 's/ .*$//'` = 'gcc' ; then
     c_warnings="$c_warnings -Wimplicit-fallthrough=2"
     cxx_warnings="$cxx_warnings -Wimplicit-fallthrough=2"
   fi
+fi
+
+if test `$CC -v 2>&1 | head -1 | sed 's/ .*$//'` = 'clang' ; then
+    dbug_cflags="$dbug_cflags -Wframe-larger-than=16384 -fno-inline"
+    c_warnings="$c_warnings -Wframe-larger-than=16384"
+    cxx_warnings="$cxx_warnings -Wframe-larger-than=16384"
 fi
 
 

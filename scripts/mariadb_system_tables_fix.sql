@@ -25,6 +25,7 @@
 # adding a 'SHOW WARNINGS' after the statement.
 
 set sql_mode='';
+set sql_safe_updates='OFF';
 set default_storage_engine=Aria;
 set enforce_storage_engine=NULL;
 set alter_algorithm='DEFAULT';
@@ -63,14 +64,16 @@ ALTER TABLE tables_priv ENGINE=Aria transactional=1;
 ALTER TABLE columns_priv ENGINE=Aria transactional=1;
 ALTER TABLE roles_mapping ENGINE=Aria transactional=1;
 ALTER TABLE plugin ENGINE=Aria transactional=1;
-ALTER TABLE servers ENGINE=Aria transactional=1;
+ALTER TABLE servers ENGINE=Aria transactional=1,
+  CONVERT TO CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci;
 ALTER TABLE time_zone_name ENGINE=Aria transactional=1;
 ALTER TABLE time_zone ENGINE=Aria transactional=1;
 ALTER TABLE time_zone_transition ENGINE=Aria transactional=1;
 ALTER TABLE time_zone_transition_type ENGINE=Aria transactional=1;
 ALTER TABLE time_zone_leap_second ENGINE=Aria transactional=1;
 ALTER TABLE proc ENGINE=Aria transactional=1;
-ALTER TABLE event ENGINE=Aria transactional=1;
+ALTER TABLE event ENGINE=Aria transactional=1,
+  DEFAULT CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci;
 ALTER TABLE proxies_priv ENGINE=Aria transactional=1;
 
 -- The following tables doesn't have to be transactional
@@ -217,6 +220,12 @@ ALTER TABLE user
   MODIFY User char(128) binary NOT NULL default '',
   ENGINE=Aria, CONVERT TO CHARACTER SET utf8mb3 COLLATE utf8mb3_bin;
 
+ALTER TABLE plugin
+  MODIFY name varchar(64) COLLATE utf8mb3_general_ci NOT NULL DEFAULT '',
+  MODIFY dl varchar(128) COLLATE utf8mb3_general_ci NOT NULL DEFAULT '',
+  CONVERT TO CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci;
+
+
 # In MySQL 5.7.6 the Password column is removed. Recreate it to preserve the number
 # of columns MariaDB expects in the user table.
 ALTER TABLE user
@@ -229,6 +238,11 @@ UPDATE user
   SET plugin='unix_socket' WHERE plugin='auth_socket';
 DELETE FROM plugin
   WHERE name='auth_socket';
+# Delete plugins that are now inbuilt but might not have been before (MDEV-32043)
+DELETE plugin
+  FROM information_schema.PLUGINS is_p
+  JOIN plugin ON plugin.name = is_p.PLUGIN_NAME
+  WHERE is_p.PLUGIN_LIBRARY IS NULL;
 
 ALTER TABLE user
   MODIFY Password char(41) character set latin1 collate latin1_bin NOT NULL default '',
@@ -300,14 +314,14 @@ SET GLOBAL log_slow_query = 'OFF';
 ALTER TABLE slow_log
   ADD COLUMN thread_id BIGINT(21) UNSIGNED NOT NULL AFTER sql_text;
 ALTER TABLE slow_log
-  ADD COLUMN rows_affected INTEGER NOT NULL AFTER thread_id;
+  ADD COLUMN rows_affected BIGINT UNSIGNED NOT NULL AFTER thread_id;
 ALTER TABLE slow_log
   MODIFY start_time TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   MODIFY user_host MEDIUMTEXT NOT NULL,
   MODIFY query_time TIME(6) NOT NULL,
   MODIFY lock_time TIME(6) NOT NULL,
-  MODIFY rows_sent INTEGER NOT NULL,
-  MODIFY rows_examined INTEGER NOT NULL,
+  MODIFY rows_sent BIGINT UNSIGNED NOT NULL,
+  MODIFY rows_examined BIGINT UNSIGNED NOT NULL,
   MODIFY db VARCHAR(512) NOT NULL,
   MODIFY last_insert_id INTEGER NOT NULL,
   MODIFY insert_id INTEGER NOT NULL,
@@ -315,11 +329,6 @@ ALTER TABLE slow_log
   MODIFY sql_text MEDIUMTEXT NOT NULL,
   MODIFY thread_id BIGINT(21) UNSIGNED NOT NULL;
 SET GLOBAL log_slow_query = @old_log_state;
-
-ALTER TABLE plugin
-  MODIFY name varchar(64) COLLATE utf8mb3_general_ci NOT NULL DEFAULT '',
-  MODIFY dl varchar(128) COLLATE utf8mb3_general_ci NOT NULL DEFAULT '',
-  CONVERT TO CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci;
 
 #
 # Detect whether we had Create_view_priv
@@ -414,7 +423,7 @@ ALTER TABLE procs_priv
   CONVERT TO CHARACTER SET utf8mb3 COLLATE utf8mb3_bin;
 
 ALTER TABLE procs_priv
-  MODIFY Proc_priv set('Execute','Alter Routine','Grant')
+  MODIFY Proc_priv set('Execute','Alter Routine','Grant','Show Create Routine')
     COLLATE utf8mb3_general_ci DEFAULT '' NOT NULL;
 
 ALTER IGNORE TABLE procs_priv
@@ -480,11 +489,11 @@ ALTER TABLE proc MODIFY name char(64) DEFAULT '' NOT NULL,
                             'SIMULTANEOUS_ASSIGNMENT',
                             'TIME_ROUND_FRACTIONAL'
                             ) DEFAULT '' NOT NULL,
-                 DEFAULT CHARACTER SET utf8mb3;
+                 DEFAULT CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci;
 
 # Correct the character set and collation
 # Reset some fields after the conversion
-ALTER TABLE proc CONVERT TO CHARACTER SET utf8mb3,
+ALTER TABLE proc CONVERT TO CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci,
                   MODIFY db char(64) binary DEFAULT '' NOT NULL,
                   MODIFY definer varchar(384) binary DEFAULT '' NOT NULL,
                   MODIFY comment text binary NOT NULL;
@@ -570,13 +579,13 @@ UPDATE proc SET Definer = 'mariadb.sys@localhost' WHERE Definer = 'root@localhos
 SET @hadEventPriv := 0;
 SELECT @hadEventPriv :=1 FROM user WHERE Event_priv IS NOT NULL;
 
-ALTER TABLE user ADD Event_priv enum('N','Y') character set utf8mb3 DEFAULT 'N' NOT NULL AFTER Create_user_priv;
-ALTER TABLE user MODIFY Event_priv enum('N','Y') character set utf8mb3 DEFAULT 'N' NOT NULL AFTER Create_user_priv;
+ALTER TABLE user ADD Event_priv enum('N','Y') character set utf8mb3 COLLATE utf8mb3_general_ci DEFAULT 'N' NOT NULL AFTER Create_user_priv;
+ALTER TABLE user MODIFY Event_priv enum('N','Y') character set utf8mb3 COLLATE utf8mb3_general_ci DEFAULT 'N' NOT NULL AFTER Create_user_priv;
 
 UPDATE user SET Event_priv=Super_priv WHERE @hadEventPriv = 0;
 
-ALTER TABLE db ADD Event_priv enum('N','Y') character set utf8mb3 DEFAULT 'N' NOT NULL;
-ALTER TABLE db MODIFY Event_priv enum('N','Y') character set utf8mb3 DEFAULT 'N' NOT NULL;
+ALTER TABLE db ADD Event_priv enum('N','Y') character set utf8mb3 COLLATE utf8mb3_general_ci DEFAULT 'N' NOT NULL;
+ALTER TABLE db MODIFY Event_priv enum('N','Y') character set utf8mb3 COLLATE utf8mb3_general_ci DEFAULT 'N' NOT NULL;
 
 #
 # EVENT table
@@ -622,17 +631,29 @@ ALTER TABLE event MODIFY sql_mode
                             'SIMULTANEOUS_ASSIGNMENT',
                             'TIME_ROUND_FRACTIONAL'
                             ) DEFAULT '' NOT NULL AFTER on_completion;
-ALTER TABLE event MODIFY name char(64) CHARACTER SET utf8mb3 NOT NULL default '';
+ALTER TABLE event MODIFY name char(64) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci NOT NULL default '';
 ALTER TABLE event MODIFY db  CHAR(64) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin NOT NULL DEFAULT '';
+
+ALTER TABLE event MODIFY interval_field
+                          enum('YEAR','QUARTER','MONTH','DAY','HOUR',
+                               'MINUTE','WEEK','SECOND','MICROSECOND',
+                               'YEAR_MONTH','DAY_HOUR','DAY_MINUTE',
+                               'DAY_SECOND','HOUR_MINUTE','HOUR_SECOND',
+                               'MINUTE_SECOND','DAY_MICROSECOND','HOUR_MICROSECOND',
+                               'MINUTE_MICROSECOND','SECOND_MICROSECOND'
+                          ) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL;
+
 ALTER TABLE event MODIFY comment CHAR(64) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin NOT NULL DEFAULT '';
 
+ALTER TABLE event MODIFY on_completion enum('DROP','PRESERVE')
+      CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci NOT NULL DEFAULT 'DROP';
 
 ALTER TABLE event ADD COLUMN originator INT UNSIGNED NOT NULL AFTER comment;
 ALTER TABLE event MODIFY COLUMN originator INT UNSIGNED NOT NULL;
 
 ALTER TABLE event MODIFY COLUMN status ENUM('ENABLED','DISABLED','SLAVESIDE_DISABLED') NOT NULL default 'ENABLED';
 
-ALTER TABLE event ADD COLUMN time_zone char(64) CHARACTER SET latin1
+ALTER TABLE event ADD COLUMN time_zone char(64) CHARACTER SET latin1 COLLATE latin1_swedish_ci
         NOT NULL DEFAULT 'SYSTEM' AFTER originator;
 
 ALTER TABLE event ADD character_set_client
@@ -699,12 +720,27 @@ ALTER TABLE db change Truncate_versioning_priv Delete_history_priv enum('N','Y')
 SET @had_user_delete_history_priv := 0;
 SELECT @had_user_delete_history_priv :=1 FROM user WHERE Delete_history_priv IS NOT NULL;
 
+SET @had_show_create_routine := 0;
+SELECT @had_show_create_routine:=1 FROM db WHERE Show_create_routine_priv IS NOT NULL;
+
 ALTER TABLE user add Delete_history_priv enum('N','Y') COLLATE utf8mb3_general_ci NOT NULL DEFAULT 'N' after Create_tablespace_priv;
 ALTER TABLE user modify Delete_history_priv enum('N','Y') COLLATE utf8mb3_general_ci NOT NULL DEFAULT 'N';
 ALTER TABLE db add Delete_history_priv enum('N','Y') COLLATE utf8mb3_general_ci NOT NULL DEFAULT 'N' after Trigger_priv;
 ALTER TABLE db modify Delete_history_priv enum('N','Y') COLLATE utf8mb3_general_ci NOT NULL DEFAULT 'N';
 
 UPDATE user SET Delete_history_priv = Super_priv WHERE @had_user_delete_history_priv = 0;
+
+ALTER TABLE db ADD    Show_create_routine_priv enum('N','Y') COLLATE utf8mb3_general_ci NOT NULL DEFAULT 'N' AFTER Delete_history_priv;
+ALTER TABLE db MODIFY Show_create_routine_priv enum('N','Y') COLLATE utf8mb3_general_ci NOT NULL DEFAULT 'N';
+
+UPDATE db SET Show_create_routine_priv='Y' WHERE @had_show_create_routine=0
+  AND Drop_priv='Y' AND Index_priv='Y' AND Alter_priv='Y'
+  AND Event_priv='Y' AND Select_priv='Y' AND Insert_priv='Y'
+  AND Update_priv='Y' AND Delete_priv='Y' AND Create_priv='Y'
+  AND Execute_priv='Y' AND Trigger_priv='Y' AND Show_view_priv='Y'
+  AND References_priv='Y' AND Lock_tables_priv='Y' AND Create_view_priv='Y'
+  AND Alter_routine_priv='Y' AND Create_routine_priv='Y'
+  AND Delete_history_priv='Y' AND Create_tmp_table_priv='Y';
 
 ALTER TABLE user ADD plugin char(64) CHARACTER SET latin1 DEFAULT '' NOT NULL AFTER max_user_connections,
                  ADD authentication_string TEXT NOT NULL AFTER plugin;
@@ -750,7 +786,7 @@ DELIMITER ;
 -- Get warnings (if any)
 SHOW WARNINGS;
 
-# Convering the host name to lower case for existing users
+# Converting the host name to lower case for existing users
 UPDATE user SET host=LOWER( host ) WHERE LOWER( host ) <> host;
 
 DELIMITER //
@@ -767,19 +803,22 @@ if @have_innodb then
 end if //
 DELIMITER ;
 
-# MDEV-4332 longer user names
+# MDEV-4332 longer user names, extended by MDEV-24312 to longer again.
 alter table user         modify User         char(128)  binary not null default '';
 alter table db           modify User         char(128)  binary not null default '';
 alter table tables_priv  modify User         char(128)  binary not null default '';
 alter table columns_priv modify User         char(128)  binary not null default '';
-alter table procs_priv   modify User         char(128)  binary not null default '';
+alter table procs_priv   modify User         char(128)  binary not null default '', modify Host char(255) binary DEFAULT '';
 alter table proc         modify definer      varchar(384) collate utf8mb3_bin not null default '';
-alter table proxies_priv modify User         char(128)  COLLATE utf8mb3_bin not null default '';
+alter table proxies_priv modify User         char(128)  COLLATE utf8mb3_bin not null default '', modify Host char(255) binary DEFAULT '';
 alter table proxies_priv modify Proxied_user char(128)  COLLATE utf8mb3_bin not null default '';
 alter table proxies_priv modify Grantor      varchar(384) COLLATE utf8mb3_bin not null default '';
 alter table servers      modify Username     char(128)                   not null default '';
 alter table procs_priv   modify Grantor      varchar(384) COLLATE utf8mb3_bin not null default '';
 alter table tables_priv  modify Grantor      varchar(384) COLLATE utf8mb3_bin not null default '';
+# MDEV-33726 longer names from MDEV-24312 extension
+alter table if exists global_priv modify Host char(255) binary DEFAULT '', modify User char(128)  binary not null default '';
+alter table if exists roles_mapping modify Host char(255) binary not null DEFAULT '', modify User char(128)  binary not null default '';
 
 # Activate the new, possible modified privilege tables
 # This should not be needed, but gives us some extra testing that the above
@@ -858,3 +897,24 @@ DELIMITER ;
 ALTER TABLE servers
   MODIFY Host varchar(2048) NOT NULL DEFAULT '',
   MODIFY Owner varchar(512) NOT NULL DEFAULT '';
+
+# MDEV-34716 Fix mysql.servers socket max length too short
+ALTER TABLE servers
+  MODIFY Socket char(108) NOT NULL DEFAULT '';
+
+# MDEV-34716 Allow arbitrary options in CREATE SERVER
+# Check existence of the Options column
+SET @hadOptions:=0;
+SELECT @hadOptions:=1 FROM servers WHERE options IS NOT NULL;
+ALTER TABLE servers
+  ADD Options JSON NOT NULL DEFAULT '{}' CHECK(JSON_VALID(Options));
+# Ensure the collation is utf8mb4_bin (default for JSON)
+ALTER TABLE servers
+  MODIFY Options JSON  NOT NULL DEFAULT '{}' CHECK(JSON_VALID(Options));
+# If the Options column did not exist, convert to the Options
+UPDATE servers SET Options = JSON_INSERT(Options, '$.host', Host) WHERE Host <> '' AND @hadOptions = 0;
+UPDATE servers SET Options = JSON_INSERT(Options, '$.database', Db) WHERE Db <> '' AND @hadOptions = 0;
+UPDATE servers SET Options = JSON_INSERT(Options, '$.username', Username) WHERE Username <> '' AND @hadOptions = 0;
+UPDATE servers SET Options = JSON_INSERT(Options, '$.port', CAST(Port AS VARCHAR(5))) WHERE @hadOptions = 0;
+UPDATE servers SET Options = JSON_INSERT(Options, '$.socket', Socket) WHERE Socket <> '' AND @hadOptions = 0;
+UPDATE servers SET Options = JSON_INSERT(Options, '$.owner', Owner) WHERE Owner <> '' AND @hadOptions = 0;

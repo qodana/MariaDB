@@ -2,7 +2,7 @@
 # This test is originally sequence.test from ALISQL by Jianwei modified for
 # MariaDB
 #
-# It tests basic sequence functionallity together with replication
+# It tests basic sequence functionality together with replication
 #
 
 --source include/have_binlog_format_row.inc
@@ -262,7 +262,7 @@ drop sequence s_db.s1;
 --echo query cache test
 --echo ###########################################
 connection master;
-flush status;
+flush global status;
 show global variables like 'query_cache_type';
 
 show status like 'Qcache_hits';

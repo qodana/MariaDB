@@ -2,7 +2,7 @@
 
 #
 # A simple test of the greedy query optimization algorithm and the switches that
-# control the optimizationprocess.
+# controls the optimization process.
 #
 
 #
@@ -140,7 +140,7 @@ insert into t7 values (21,2,3,4,5,6);
 # The actual test begins here
 #
 
-# This value swithes back to the old implementation of 'find_best()'
+# This value switches back to the old implementation of 'find_best()'
 # set optimizer_search_depth=63; - old (independent of the optimizer_prune_level)
 #
 # These are the values for the parameters that control the greedy optimizer
@@ -424,6 +424,7 @@ EXPLAIN SELECT * FROM t100,t10000,t10;
 EXPLAIN SELECT * FROM t10000,t10,t100;
 EXPLAIN SELECT * FROM t10000,t100,t10;
 
+--disable_cursor_protocol
 ######
 ## Ordering between T100,T10000 EQ-joined T10 will
 ## normally be with smallest EQ-table joined first
@@ -715,6 +716,7 @@ SELECT COUNT(*) FROM t10,t10000 y,t10000 x
 WHERE x.k=t10.i
   AND y.i=x.k;
 --source include/check_qep.inc
+--enable_cursor_protocol
 
 ########
 
@@ -727,7 +729,7 @@ WHERE x.k=t10.i
 --echo # plans without restricting 'optimizer_search_depth'.
 --echo # Fix problems like those reported as bug#41740 & bug#58225.
 --echo #
---echo # EPLAIN of queries using T1-T62 will timeout/hang wo/ fixes
+--echo # EXPLAIN of queries using T1-T62 will timeout/hang wo/ fixes
 --echo #
 
 DROP TABLE t10, t10000;
@@ -935,7 +937,7 @@ CREATE TABLE t1 (pk INTEGER,
  col_int_key INTEGER,
  col_varchar_key VARCHAR(8),
  PRIMARY KEY (pk),
- KEY (col_varchar_key, col_int_key, pk));
+ KEY (col_varchar_key, col_int_key, pk)) CHARSET=latin1;
 
 INSERT INTO t1 values (1,1,"A"),(2,2,"B");
 explain SELECT * FROM t1 AS alias1

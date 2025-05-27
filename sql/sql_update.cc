@@ -61,7 +61,7 @@ bool records_are_comparable(const TABLE *table) {
 
 
 /**
-   Compares the input and outbut record buffers of the table to see if a row
+   Compares the input and output record buffers of the table to see if a row
    has changed.
 
    @return true if row has changed.
@@ -249,12 +249,12 @@ static void prepare_record_for_error_message(int error, TABLE *table)
   Field *field;
   uint keynr;
   MY_BITMAP unique_map; /* Fields in offended unique. */
-  my_bitmap_map unique_map_buf[bitmap_buffer_size(MAX_FIELDS)];
+  my_bitmap_map unique_map_buf[bitmap_buffer_size(MAX_FIELDS)/sizeof(my_bitmap_map)];
   DBUG_ENTER("prepare_record_for_error_message");
 
   /*
     Only duplicate key errors print the key value.
-    If storage engine does always read all columns, we have the value alraedy.
+    If storage engine does always read all columns, we have the value already.
   */
   if ((error != HA_ERR_FOUND_DUPP_KEY) ||
       !(table->file->ha_table_flags() & HA_PARTIAL_COLUMN_READ))
@@ -361,6 +361,7 @@ bool Sql_cmd_update::update_single_table(THD *thd)
   bool          used_key_is_modified= FALSE, transactional_table;
   bool          will_batch= FALSE;
   bool		can_compare_record;
+  bool          binlogged= 0;
   int           res;
   int		error, loc_error;
   ha_rows       dup_key_found;
@@ -376,6 +377,16 @@ bool Sql_cmd_update::update_single_table(THD *thd)
   List<Item> all_fields;
   killed_state killed_status= NOT_KILLED;
   bool has_triggers, binlog_is_row, do_direct_update= FALSE;
+  /*
+    TRUE if we are after the call to
+    select_lex->optimize_unflattened_subqueries(true) and before the
+    call to select_lex->optimize_unflattened_subqueries(false), to
+    ensure a call to
+    select_lex->optimize_unflattened_subqueries(false) happens which
+    avoid 2nd ps mem leaks when e.g. the first execution produces
+    empty result and the second execution produces a non-empty set
+  */
+  bool need_to_optimize= FALSE;
   Update_plan query_plan(thd->mem_root);
   Explain_update *explain;
   query_plan.index= MAX_KEY;
@@ -422,9 +433,18 @@ bool Sql_cmd_update::update_single_table(THD *thd)
   switch_to_nullable_trigger_fields(*fields, table);
   switch_to_nullable_trigger_fields(*values, table);
 
-  /* Apply the IN=>EXISTS transformation to all subqueries and optimize them */
-  if (select_lex->optimize_unflattened_subqueries(false))
+  /*
+    Apply the IN=>EXISTS transformation to all constant subqueries
+    and optimize them.
+
+    It is too early to choose subquery optimization strategies without
+    an estimate of how many times the subquery will be executed so we
+    call optimize_unflattened_subqueries() with const_only= true, and
+    choose between materialization and in-to-exists later.
+  */
+  if (select_lex->optimize_unflattened_subqueries(true))
     DBUG_RETURN(TRUE);
+  need_to_optimize= TRUE;
 
   if (conds)
   {
@@ -451,6 +471,9 @@ bool Sql_cmd_update::update_single_table(THD *thd)
                                           (uchar *) 0);
   }
 
+  if (conds && substitute_indexed_vcols_for_table(table, conds))
+    DBUG_RETURN(1); // Fatal error
+
   // Don't count on usage of 'only index' when calculating which key to use
   table->covering_keys.clear_all();
   transactional_table= table->file->has_transactions_and_rollback();
@@ -458,6 +481,9 @@ bool Sql_cmd_update::update_single_table(THD *thd)
 #ifdef WITH_PARTITION_STORAGE_ENGINE
   if (prune_partitions(thd, table, conds))
   {
+    if (need_to_optimize && select_lex->optimize_unflattened_subqueries(false))
+      DBUG_RETURN(TRUE);
+    need_to_optimize= FALSE;
     free_underlaid_joins(thd, select_lex);
 
     query_plan.set_no_partitions();
@@ -469,6 +495,13 @@ bool Sql_cmd_update::update_single_table(THD *thd)
     if (thd->binlog_for_noop_dml(transactional_table))
       DBUG_RETURN(1);
 
+    if (!thd->lex->current_select->leaf_tables_saved)
+    {
+      thd->lex->current_select->save_leaf_tables(thd);
+      thd->lex->current_select->leaf_tables_saved= true;
+      thd->lex->current_select->first_cond_optimization= 0;
+    }
+
     my_ok(thd);				// No matching records
     DBUG_RETURN(0);
   }
@@ -478,16 +511,18 @@ bool Sql_cmd_update::update_single_table(THD *thd)
   set_statistics_for_table(thd, table);
 
   select= make_select(table, 0, 0, conds, (SORT_INFO*) 0, 0, &error);
-  if (unlikely(error || thd->is_error() || !limit ||
-               (select && select->check_quick(thd, safe_update, limit)) ||
-               table->stat_records() == 0))
-
+  if (error || !limit || thd->is_error() || table->stat_records() == 0 ||
+      (select && select->check_quick(thd, safe_update, limit,
+                                      Item_func::BITMAP_ALL)))
   {
     query_plan.set_impossible_where();
     if (thd->lex->describe || thd->lex->analyze_stmt)
       goto produce_explain_and_leave;
 
     delete select;
+    if (need_to_optimize && select_lex->optimize_unflattened_subqueries(false))
+      DBUG_RETURN(TRUE);
+    need_to_optimize= FALSE;
     free_underlaid_joins(thd, select_lex);
     /*
       There was an error or the error was already sent by
@@ -503,6 +538,13 @@ bool Sql_cmd_update::update_single_table(THD *thd)
 
     if (thd->binlog_for_noop_dml(transactional_table))
       DBUG_RETURN(1);
+
+    if (!thd->lex->current_select->leaf_tables_saved)
+    {
+      thd->lex->current_select->save_leaf_tables(thd);
+      thd->lex->current_select->leaf_tables_saved= true;
+      thd->lex->current_select->first_cond_optimization= 0;
+    }
 
     my_ok(thd);				// No matching records
     DBUG_RETURN(0);
@@ -534,8 +576,20 @@ bool Sql_cmd_update::update_single_table(THD *thd)
 
   table->update_const_key_parts(conds);
   order= simple_remove_const(order, conds);
-  query_plan.scanned_rows= select? select->records: table->file->stats.records;
-        
+
+  /*
+    Estimate the number of scanned rows and have it accessible in
+    JOIN::choose_subquery_plan() from the outer join through
+    JOIN::sql_cmd_dml
+  */
+  scanned_rows= query_plan.scanned_rows= select ?
+    select->records : table->file->stats.records;
+  select_lex->join->sql_cmd_dml= this;
+  DBUG_ASSERT(need_to_optimize);
+  if (select_lex->optimize_unflattened_subqueries(false))
+    DBUG_RETURN(TRUE);
+  need_to_optimize= FALSE;
+
   if (select && select->quick && select->quick->unique_key_range())
   {
     /* Single row select (always "ordered"): Ok to use with key field UPDATE */
@@ -611,8 +665,9 @@ bool Sql_cmd_update::update_single_table(THD *thd)
   has_triggers= (table->triggers &&
                  (table->triggers->has_triggers(TRG_EVENT_UPDATE,
                                                 TRG_ACTION_BEFORE) ||
-                 table->triggers->has_triggers(TRG_EVENT_UPDATE,
-                                               TRG_ACTION_AFTER)));
+                  table->triggers->has_triggers(TRG_EVENT_UPDATE,
+                                                TRG_ACTION_AFTER)) &&
+                 table->triggers->match_updatable_columns(fields));
 
   if (table_list->has_period())
     has_triggers= table->triggers &&
@@ -712,7 +767,6 @@ bool Sql_cmd_update::update_single_table(THD *thd)
 
       if (!(file_sort= filesort(thd, table, &fsort, fs_tracker)))
 	goto err;
-      thd->inc_examined_row_count(file_sort->examined_rows);
 
       /*
 	Filesort has already found and selected the rows we want to update,
@@ -739,7 +793,8 @@ bool Sql_cmd_update::update_single_table(THD *thd)
       explain->buf_tracker.on_scan_init();
       IO_CACHE tempfile;
       if (open_cached_file(&tempfile, mysql_tmpdir,TEMP_PREFIX,
-                           DISK_CHUNK_SIZE, MYF(MY_WME)))
+                           DISK_CHUNK_SIZE,
+                           MYF(MY_WME | MY_TRACK_WITH_LIMIT)))
         goto err;
 
       /* If quick select is used, initialize it before retrieving rows. */
@@ -780,7 +835,7 @@ bool Sql_cmd_update::update_single_table(THD *thd)
       while (likely(!(error=info.read_record())) && likely(!thd->killed))
       {
         explain->buf_tracker.on_record_read();
-        thd->inc_examined_row_count(1);
+        thd->inc_examined_row_count();
 	if (!select || (error= select->skip_record(thd)) > 0)
 	{
           if (table->file->ha_was_semi_consistent_read())
@@ -886,9 +941,9 @@ update_begin:
     goto update_end;
   }
 
-  if ((table->file->ha_table_flags() & HA_CAN_FORCE_BULK_UPDATE) &&
-      !table->prepare_triggers_for_update_stmt_or_event() &&
-      !thd->lex->with_rownum)
+  if (!table->prepare_triggers_for_update_stmt_or_event() &&
+      !thd->lex->with_rownum &&
+      table->file->ha_table_flags() & HA_CAN_FORCE_BULK_UPDATE)
     will_batch= !table->file->start_bulk_update();
 
   /*
@@ -908,7 +963,7 @@ update_begin:
   can_compare_record= records_are_comparable(table);
   explain->tracker.on_scan_init();
 
-  table->file->prepare_for_insert(1);
+  table->file->prepare_for_modify(true, true);
   DBUG_ASSERT(table->file->inited != handler::NONE);
 
   THD_STAGE_INFO(thd, stage_updating);
@@ -917,7 +972,7 @@ update_begin:
   while (!(error=info.read_record()) && !thd->killed)
   {
     explain->tracker.on_record_read();
-    thd->inc_examined_row_count(1);
+    thd->inc_examined_row_count();
     if (!select || select->skip_record(thd) > 0)
     {
       if (table->file->ha_was_semi_consistent_read())
@@ -930,9 +985,18 @@ update_begin:
         cut_fields_for_portion_of_time(thd, table,
                                        table_list->period_conditions);
 
+      bool trg_skip_row= false;
       if (fill_record_n_invoke_before_triggers(thd, table, *fields, *values, 0,
-                                               TRG_EVENT_UPDATE))
+                                               TRG_EVENT_UPDATE,
+                                               &trg_skip_row))
         break; /* purecov: inspected */
+      if (trg_skip_row)
+      {
+        updated_or_same++;
+        thd->get_stmt_da()->inc_current_row_for_warning();
+
+        continue;
+      }
 
       found++;
 
@@ -1060,9 +1124,12 @@ error:
 
       if (table->triggers &&
           unlikely(table->triggers->process_triggers(thd, TRG_EVENT_UPDATE,
-                                                     TRG_ACTION_AFTER, TRUE)))
+                                                     TRG_ACTION_AFTER, true,
+                                                     nullptr,
+                                                     fields)))
       {
         error= 1;
+
         break;
       }
 
@@ -1209,7 +1276,8 @@ update_end:
   if (likely(error < 0) || thd->transaction->stmt.modified_non_trans_table ||
       thd->log_current_statement())
   {
-    if (WSREP_EMULATE_BINLOG(thd) || mysql_bin_log.is_open())
+    if ((WSREP_EMULATE_BINLOG(thd) || mysql_bin_log.is_open()) &&
+        table->s->using_binlog())
     {
       int errcode= 0;
       if (likely(error < 0))
@@ -1225,8 +1293,12 @@ update_end:
       {
         error=1;				// Rollback update
       }
+      binlogged= 1;
     }
   }
+  if (!binlogged)
+    table->mark_as_not_binlogged();
+
   DBUG_ASSERT(transactional_table || !updated || thd->transaction->stmt.modified_non_trans_table);
   free_underlaid_joins(thd, select_lex);
   delete file_sort;
@@ -1252,15 +1324,33 @@ update_end:
                   ER_THD(thd, ER_UPDATE_INFO_WITH_SYSTEM_VERSIONING),
                   (ulong) found, (ulong) updated, (ulong) rows_inserted,
                   (ulong) thd->get_stmt_da()->current_statement_warn_count());
+    thd->collect_unit_results(
+            id,
+            (thd->client_capabilities & CLIENT_FOUND_ROWS) ? found : updated);
     my_ok(thd, (thd->client_capabilities & CLIENT_FOUND_ROWS) ? found : updated,
           id, buff);
+    if (thd->get_stmt_da()->is_bulk_op())
+    {
+      /*
+        Update the diagnostics message sent to a client with number of actual
+        rows update by the statement. For bulk UPDATE operation it should be
+        done after returning from my_ok() since the final number of updated
+        rows be knows on finishing the entire bulk update statement.
+      */
+      my_snprintf(buff, sizeof(buff), ER_THD(thd, ER_UPDATE_INFO),
+                  (ulong) thd->get_stmt_da()->affected_rows(),
+                  (ulong) thd->get_stmt_da()->affected_rows(),
+                  (ulong) thd->get_stmt_da()->current_statement_warn_count());
+      thd->get_stmt_da()->set_message(buff);
+    }
     DBUG_PRINT("info",("%ld records updated", (long) updated));
   }
   thd->count_cuted_fields= CHECK_FIELD_IGNORE;		/* calc cuted fields */
   thd->abort_on_warning= 0;
-  if (thd->lex->current_select->first_cond_optimization)
+  if (!thd->lex->current_select->leaf_tables_saved)
   {
     thd->lex->current_select->save_leaf_tables(thd);
+    thd->lex->current_select->leaf_tables_saved= true;
     thd->lex->current_select->first_cond_optimization= 0;
   }
   ((multi_update *)result)->set_found(found);
@@ -1274,6 +1364,9 @@ update_end:
 err:
   delete select;
   delete file_sort;
+  if (!thd->is_error() && need_to_optimize &&
+      select_lex->optimize_unflattened_subqueries(false))
+    DBUG_RETURN(TRUE);
   free_underlaid_joins(thd, select_lex);
   table->file->ha_end_keyread();
   if (table->file->pushed_cond)
@@ -1290,6 +1383,9 @@ produce_explain_and_leave:
     goto err;
 
 emit_explain_and_leave:
+  if (!thd->is_error() && need_to_optimize &&
+      select_lex->optimize_unflattened_subqueries(false))
+    DBUG_RETURN(TRUE);
   bool extended= thd->lex->describe & DESCRIBE_EXTENDED;
   int err2= thd->lex->explain->send_explain(thd, extended);
 
@@ -1576,7 +1672,7 @@ bool Multiupdate_prelocking_strategy::handle_end(THD *thd)
 
   if (setup_tables_and_check_access(thd, &select_lex->context,
       &select_lex->top_join_list, table_list, select_lex->leaf_tables,
-      FALSE, UPDATE_ACL, SELECT_ACL, TRUE))
+      false, UPDATE_ACL, SELECT_ACL, true))
     DBUG_RETURN(1);
 
   if (table_list->has_period() &&
@@ -1584,15 +1680,15 @@ bool Multiupdate_prelocking_strategy::handle_end(THD *thd)
     DBUG_RETURN(true);
 
   List<Item> *fields= &lex->first_select_lex()->item_list;
-  if (setup_fields_with_no_wrap(thd, Ref_ptr_array(),
-                                *fields, MARK_COLUMNS_WRITE, 0, 0))
+  if (setup_fields_with_no_wrap(thd, Ref_ptr_array(), *fields,
+                                MARK_COLUMNS_WRITE, 0, 0, THD_WHERE::SET_LIST))
     DBUG_RETURN(1);
 
   // Check if we have a view in the list ...
   for (tl= table_list; tl ; tl= tl->next_local)
     if (tl->view)
       break;
-  // ... and pass this knowlage in check_fields call
+  // ... and pass this knowledge in check_fields call
   if (check_fields(thd, table_list, *fields, tl != NULL ))
     DBUG_RETURN(1);
 
@@ -1692,25 +1788,47 @@ bool Multiupdate_prelocking_strategy::handle_end(THD *thd)
 }
 
 
-multi_update::multi_update(THD *thd_arg, TABLE_LIST *table_list,
+multi_update::multi_update(THD *thd_arg,
+                           TABLE_LIST *table_list,
                            List<TABLE_LIST> *leaves_list,
-			   List<Item> *field_list, List<Item> *value_list,
-			   enum enum_duplicates handle_duplicates_arg,
-                           bool ignore_arg):
-   select_result_interceptor(thd_arg),
-   all_tables(table_list), leaves(leaves_list), update_tables(0),
-   tmp_tables(0), updated(0), found(0), fields(field_list),
-   values(value_list), table_count(0), copy_field(0),
-   handle_duplicates(handle_duplicates_arg), do_update(1), trans_safe(1),
-   transactional_tables(0), ignore(ignore_arg), error_handled(0), prepared(0),
-   updated_sys_ver(0)
+                           List<Item> *field_list,
+                           List<Item> *value_list,
+                           enum enum_duplicates handle_duplicates_arg,
+                           bool ignore_arg)
+  : select_result_interceptor(thd_arg),
+    all_tables(table_list),
+    leaves(leaves_list),
+    update_tables(0),
+    tmp_tables(0),
+    updated(0),
+    found(0),
+    fields(field_list),
+    values(value_list),
+    table_count(0),
+    copy_field(0),
+    handle_duplicates(handle_duplicates_arg),
+    do_update(1),
+    trans_safe(1),
+    transactional_tables(0),
+    ignore(ignore_arg),
+    error_handled(0),
+    prepared(0),
+    updated_sys_ver(0),
+    tables_to_update(get_table_map(fields))
 {
+  // Defer error reporting to multi_update::init when tables_to_update is zero
+  // because we don't have exceptions and we can't return values from a constructor.
 }
 
 
 bool multi_update::init(THD *thd)
 {
-  table_map tables_to_update= get_table_map(fields);
+  if (!tables_to_update)
+  {
+    my_message(ER_NO_TABLES_USED, ER_THD(thd, ER_NO_TABLES_USED), MYF(0));
+    return true;
+  }
+
   List_iterator_fast<TABLE_LIST> li(*leaves);
   TABLE_LIST *tbl;
   while ((tbl =li++))
@@ -1722,6 +1840,24 @@ bool multi_update::init(THD *thd)
     if (updated_leaves.push_back(tbl, thd->mem_root))
       return true;
   }
+
+  List_iterator<TABLE_LIST> updated_leaves_iter(updated_leaves);
+  TABLE_LIST *table_ref;
+  while ((table_ref= updated_leaves_iter++))
+  {
+    /* TODO: add support of view of join support */
+    if (table_ref->is_jtbm())
+      continue;
+
+    TABLE *table= table_ref->table;
+    if (tables_to_update & table->map)
+      update_targets.push_back(table_ref);
+  }
+  table_count= update_targets.elements;
+  tmp_tables = thd->calloc<TABLE*>(table_count);
+  tmp_table_param = thd->calloc<TMP_TABLE_PARAM>(table_count);
+  fields_for_table= thd->alloc<List_item*>(table_count);
+  values_for_table= thd->alloc<List_item*>(table_count);
   return false;
 }
 
@@ -1748,14 +1884,13 @@ int multi_update::prepare(List<Item> &not_used_values,
 
 {
   TABLE_LIST *table_ref;
-  SQL_I_List<TABLE_LIST> update;
-  table_map tables_to_update;
+  SQL_I_List<TABLE_LIST> update_list;
   Item_field *item;
   List_iterator_fast<Item> field_it(*fields);
   List_iterator_fast<Item> value_it(*values);
   uint i, max_fields;
   uint leaf_table_count= 0;
-  List_iterator<TABLE_LIST> ti(updated_leaves);
+  List_iterator<TABLE_LIST> update_targets_iter(update_targets);
   DBUG_ENTER("multi_update::prepare");
 
   if (prepared)
@@ -1766,101 +1901,69 @@ int multi_update::prepare(List<Item> &not_used_values,
   thd->cuted_fields=0L;
   THD_STAGE_INFO(thd, stage_updating_main_table);
 
-  tables_to_update= get_table_map(fields);
-
-  if (!tables_to_update)
-  {
-    my_message(ER_NO_TABLES_USED, ER_THD(thd, ER_NO_TABLES_USED), MYF(0));
-    DBUG_RETURN(1);
-  }
-
   /*
     We gather the set of columns read during evaluation of SET expression in
     TABLE::tmp_set by pointing TABLE::read_set to it and then restore it after
     setup_fields().
   */
-  while ((table_ref= ti++))
+  while ((table_ref= update_targets_iter++))
   {
-    if (table_ref->is_jtbm())
-      continue;
-
     TABLE *table= table_ref->table;
-    if (tables_to_update & table->map)
-    {
-      DBUG_ASSERT(table->read_set == &table->def_read_set);
-      table->read_set= &table->tmp_set;
-      bitmap_clear_all(table->read_set);
-    }
+    DBUG_ASSERT(table->read_set == &table->def_read_set);
+    table->read_set= &table->tmp_set;
+    bitmap_clear_all(table->read_set);
   }
 
   /*
     We have to check values after setup_tables to get covering_keys right in
     reference tables
   */
-
   int error= setup_fields(thd, Ref_ptr_array(),
                           *values, MARK_COLUMNS_READ, 0, NULL, 0) ||
              TABLE::check_assignability_explicit_fields(*fields, *values,
                                                         ignore);
-
-  ti.rewind();
-  while ((table_ref= ti++))
-  {
-    if (table_ref->is_jtbm())
-      continue;
-
-    TABLE *table= table_ref->table;
-    if (tables_to_update & table->map)
-    {
-      table->read_set= &table->def_read_set;
-      bitmap_union(table->read_set, &table->tmp_set);
-      if (!(thd->lex->context_analysis_only & CONTEXT_ANALYSIS_ONLY_PREPARE))
-        table->file->prepare_for_insert(1);
-    }
-  }
   if (unlikely(error))
-    DBUG_RETURN(1);    
+    DBUG_RETURN(1);
 
   /*
-    Save tables being updated in update_tables
-    update_table->shared is position for table
-    Don't use key read on tables that are updated
-  */
-
-  update.empty();
-  ti.rewind();
-  while ((table_ref= ti++))
+    Restore TABLE::tmp_set as we promised just before setup_tables.
+   */
+  update_targets_iter.rewind();
+  while ((table_ref= update_targets_iter++))
   {
-    /* TODO: add support of view of join support */
-    if (table_ref->is_jtbm())
-      continue;
-    TABLE *table=table_ref->table;
-    leaf_table_count++;
-    if (tables_to_update & table->map)
-    {
-      TABLE_LIST *tl= (TABLE_LIST*) thd->memdup(table_ref,
-						sizeof(*tl));
-      if (!tl)
-	DBUG_RETURN(1);
-      update.link_in_list(tl, &tl->next_local);
-      table_ref->shared= tl->shared= table_count++;
-      table->no_keyread=1;
-      table->covering_keys.clear_all();
-      table->prepare_triggers_for_update_stmt_or_event();
-      table->reset_default_fields();
-    }
+    TABLE *table= table_ref->table;
+    table->read_set= &table->def_read_set;
+    bitmap_union(table->read_set, &table->tmp_set);
+    if (!(thd->lex->context_analysis_only & CONTEXT_ANALYSIS_ONLY_PREPARE))
+      table->file->prepare_for_modify(true, true);
   }
 
-  table_count=  update.elements;
-  update_tables= update.first;
+  /*
+    Save tables that we will update into update_list.
+    table_ref->shared links this table to its corresponding temporary table
+    for collecting row ids.
+    Don't use key read on tables that are updated.
+  */
+  update_list.empty();
+  update_targets_iter.rewind();
+  for (uint index= 0; (table_ref= update_targets_iter++);)
+  {
+    TABLE *table=table_ref->table;
+    leaf_table_count++;
+    TABLE_LIST *tl= (TABLE_LIST*) thd->memdup(table_ref,
+					sizeof(*tl));
+    if (!tl)
+      DBUG_RETURN(1);
+    update_list.insert(tl, &tl->next_local);
+    table_ref->shared= tl->shared= index++;
+    table->no_keyread=1;
+    table->covering_keys.clear_all();
+    table->prepare_triggers_for_update_stmt_or_event();
+    table->reset_default_fields();
+  }
 
-  tmp_tables = (TABLE**) thd->calloc(sizeof(TABLE *) * table_count);
-  tmp_table_param = (TMP_TABLE_PARAM*) thd->calloc(sizeof(TMP_TABLE_PARAM) *
-						   table_count);
-  fields_for_table= (List_item **) thd->alloc(sizeof(List_item *) *
-					      table_count);
-  values_for_table= (List_item **) thd->alloc(sizeof(List_item *) *
-					      table_count);
+  update_tables= update_list.first;
+
   if (unlikely(thd->is_fatal_error))
     DBUG_RETURN(1);
   for (i=0 ; i < table_count ; i++)
@@ -1877,6 +1980,10 @@ int multi_update::prepare(List<Item> &not_used_values,
   {
     Item *value= value_it++;
     uint offset= item->field->table->pos_in_table_list->shared;
+
+    if (value->associate_with_target_field(thd, item))
+      DBUG_RETURN(1);
+
     fields_for_table[offset]->push_back(item, thd->mem_root);
     values_for_table[offset]->push_back(value, thd->mem_root);
   }
@@ -2038,7 +2145,7 @@ multi_update::initialize_tables(JOIN *join)
   for (table_ref= update_tables; table_ref; table_ref= table_ref->next_local)
   {
     TABLE *table=table_ref->table;
-    uint cnt= table_ref->shared;
+    uint index= table_ref->shared;
     List<Item> temp_fields;
     ORDER     group;
     TMP_TABLE_PARAM *tmp_param;
@@ -2100,8 +2207,6 @@ loop_end:
       }
     }
 
-    tmp_param= tmp_table_param+cnt;
-
     /*
       Create a temporary table to store all fields that are changed for this
       table. The first field in the temporary table is a pointer to the
@@ -2114,9 +2219,6 @@ loop_end:
     TABLE *tbl= table;
     do
     {
-      LEX_CSTRING field_name;
-      field_name.str= tbl->alias.c_ptr();
-      field_name.length= strlen(field_name.str);
       /*
         Signal each table (including tables referenced by WITH CHECK OPTION
         clause) for which we will store row position in the temporary table
@@ -2134,27 +2236,25 @@ loop_end:
         DBUG_RETURN(1);
     } while ((tbl= tbl_it++));
 
-    temp_fields.append(fields_for_table[cnt]);
+    temp_fields.append(fields_for_table[index]);
 
     /* Make an unique key over the first field to avoid duplicated updates */
     bzero((char*) &group, sizeof(group));
     group.direction= ORDER::ORDER_ASC;
     group.item= (Item**) temp_fields.head_ref();
 
-    tmp_param->quick_group= 1;
+    tmp_param= &tmp_table_param[index];
+    tmp_param->init();
+    tmp_param->tmp_name="update";
     tmp_param->field_count= temp_fields.elements;
     tmp_param->func_count=  temp_fields.elements - 1;
     calc_group_buffer(tmp_param, &group);
-    /* small table, ignore @@big_tables */
-    my_bool save_big_tables= thd->variables.big_tables; 
-    thd->variables.big_tables= FALSE;
-    tmp_tables[cnt]=create_tmp_table(thd, tmp_param, temp_fields,
+    tmp_tables[index]=create_tmp_table(thd, tmp_param, temp_fields,
                                      (ORDER*) &group, 0, 0,
                                      TMP_TABLE_ALL_COLUMNS, HA_POS_ERROR, &empty_clex_str);
-    thd->variables.big_tables= save_big_tables;
-    if (!tmp_tables[cnt])
+    if (!tmp_tables[index])
       DBUG_RETURN(1);
-    tmp_tables[cnt]->file->extra(HA_EXTRA_WRITE_CACHE);
+    tmp_tables[index]->file->extra(HA_EXTRA_WRITE_CACHE);
   }
   join->tmp_table_keep_current_rowid= TRUE;
   DBUG_RETURN(0);
@@ -2283,11 +2383,17 @@ int multi_update::send_data(List<Item> &not_used_values)
       table->status|= STATUS_UPDATED;
       store_record(table,record[1]);
 
+      bool trg_skip_row= false;
       if (fill_record_n_invoke_before_triggers(thd, table,
                                                *fields_for_table[offset],
                                                *values_for_table[offset], 0,
-                                               TRG_EVENT_UPDATE))
+                                               TRG_EVENT_UPDATE,
+                                               &trg_skip_row))
 	DBUG_RETURN(1);
+
+      if (trg_skip_row)
+        continue;
+
       /*
         Reset the table->auto_increment_field_not_null as it is valid for
         only one row.
@@ -2359,7 +2465,9 @@ int multi_update::send_data(List<Item> &not_used_values)
       }
       if (table->triggers &&
           unlikely(table->triggers->process_triggers(thd, TRG_EVENT_UPDATE,
-                                                     TRG_ACTION_AFTER, TRUE)))
+                                                     TRG_ACTION_AFTER, true,
+                                                     nullptr,
+                                                     fields_for_table[offset])))
         DBUG_RETURN(1);
     }
     else
@@ -2375,7 +2483,7 @@ int multi_update::send_data(List<Item> &not_used_values)
                   tmp_table_param[offset].func_count);
       fill_record(thd, tmp_table,
                   tmp_table->field + 1 + unupdated_check_opt_tables.elements,
-                  *values_for_table[offset], TRUE, FALSE);
+                  *values_for_table[offset], true, false, false);
 
       /* Write row, ignoring duplicated updates to a row */
       error= tmp_table->file->ha_write_tmp_row(tmp_table->record[0]);
@@ -2420,10 +2528,19 @@ error:
 
 void multi_update::abort_result_set()
 {
+  TABLE_LIST *cur_table;
+
   /* the error was handled or nothing deleted and no side effects return */
   if (unlikely(error_handled ||
                (!thd->transaction->stmt.modified_non_trans_table && !updated)))
-    return;
+    goto end;
+
+  /****************************************************************************
+
+    NOTE: if you change here be aware that almost the same code is in
+     multi_update::send_eof().
+
+  ***************************************************************************/
 
   /* Something already updated so we have to invalidate cache */
   if (updated)
@@ -2468,6 +2585,15 @@ void multi_update::abort_result_set()
   thd->transaction->all.m_unsafe_rollback_flags|=
     (thd->transaction->stmt.m_unsafe_rollback_flags & THD_TRANS::DID_WAIT);
   DBUG_ASSERT(trans_safe || !updated || thd->transaction->stmt.modified_non_trans_table);
+
+end:
+  /*
+    Mark all temporay tables as not completely binlogged
+    All future usage of these tables will enforce row level logging, which
+    ensures that all future usage of them enforces row level logging.
+  */
+  for (cur_table= update_tables; cur_table; cur_table= cur_table->next_local)
+    cur_table->table->mark_as_not_binlogged();
 }
 
 
@@ -2504,8 +2630,6 @@ int multi_update::do_updates()
     table = cur_table->table;
     if (table == table_to_update)
       continue;					// Already updated
-    if (table->file->pushed_rowid_filter)
-      table->file->disable_pushed_rowid_filter();
     org_updated= updated;
     tmp_table= tmp_tables[cur_table->shared];
     tmp_table->file->extra(HA_EXTRA_CACHE);	// Change to read cache
@@ -2619,10 +2743,17 @@ int multi_update::do_updates()
       if (table->vfield &&
           table->update_virtual_fields(table->file, VCOL_UPDATE_FOR_WRITE))
         goto err2;
+
+      bool trg_skip_row= false;
       if (table->triggers &&
           table->triggers->process_triggers(thd, TRG_EVENT_UPDATE,
-                                            TRG_ACTION_BEFORE, TRUE))
+                                            TRG_ACTION_BEFORE, true,
+                                            &trg_skip_row,
+                                            fields_for_table[offset]))
         goto err2;
+
+      if (trg_skip_row)
+        continue;
 
       if (!can_compare_record || compare_record(table))
       {
@@ -2681,7 +2812,9 @@ int multi_update::do_updates()
 
       if (table->triggers &&
           unlikely(table->triggers->process_triggers(thd, TRG_EVENT_UPDATE,
-                                                     TRG_ACTION_AFTER, TRUE)))
+                                                     TRG_ACTION_AFTER, true,
+                                                     nullptr,
+                                                     fields_for_table[offset])))
         goto err2;
     }
 
@@ -2699,9 +2832,7 @@ int multi_update::do_updates()
     (void) tmp_table->file->ha_rnd_end();
     check_opt_it.rewind();
     while (TABLE *tbl= check_opt_it++)
-        tbl->file->ha_rnd_end();
-    if (table->file->save_pushed_rowid_filter)
-      table->file->enable_pushed_rowid_filter();
+      tbl->file->ha_rnd_end();
   }
   DBUG_RETURN(0);
 
@@ -2712,8 +2843,6 @@ err:
   }
 
 err2:
-  if (table->file->save_pushed_rowid_filter)
-    table->file->enable_pushed_rowid_filter();
   if (table->file->inited)
     (void) table->file->ha_rnd_end();
   if (tmp_table->file->inited)
@@ -2762,6 +2891,13 @@ bool multi_update::send_eof()
   */
   killed_status= (local_error == 0) ? NOT_KILLED : thd->killed;
   THD_STAGE_INFO(thd, stage_end);
+
+  /****************************************************************************
+
+    NOTE: if you change here be aware that almost the same code is in
+     multi_update::abort_result_set().
+
+  ***************************************************************************/
 
   /* We must invalidate the query cache before binlog writing and
   ha_autocommit_... */
@@ -3072,6 +3208,7 @@ err:
 bool Sql_cmd_update::execute_inner(THD *thd)
 {
   bool res= 0;
+  Running_stmt_guard guard(thd, active_dml_stmt::UPDATING_STMT);
 
   thd->get_stmt_da()->reset_current_row_for_warning(1);
   if (!multitable)
@@ -3103,5 +3240,6 @@ bool Sql_cmd_update::execute_inner(THD *thd)
     delete result;
   }
 
+  status_var_add(thd->status_var.rows_sent, thd->get_sent_row_count());
   return res;
 }

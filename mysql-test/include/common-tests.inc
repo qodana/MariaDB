@@ -44,7 +44,7 @@ CREATE TABLE t2 (
   UNIQUE fld1 (fld1),
   KEY fld3 (fld3),
   PRIMARY KEY (auto)
-);  
+) CHARSET=latin1;
 
 #
 # Populate table
@@ -1374,7 +1374,7 @@ create table t3 (
  price2     double(11,0),
  key (period),
  key (name)
-);
+) CHARSET=latin1;
 
 --disable_query_log
 INSERT INTO t3 (period,name,companynr,price,price2) VALUES (1001,"Iranizes",37,5987435,234724);
@@ -1506,7 +1506,7 @@ create table t4 (
   companyname char(30) NOT NULL default '',
   PRIMARY KEY (companynr),
   UNIQUE KEY companyname(companyname)
-) ENGINE=aria MAX_ROWS=50 PACK_KEYS=1 COMMENT='companynames';
+) ENGINE=aria CHARSET=latin1 MAX_ROWS=50 PACK_KEYS=1 COMMENT='companynames';
 
 --disable_query_log
 INSERT INTO t4 (companynr, companyname) VALUES (29,'company 1');
@@ -1524,7 +1524,7 @@ INSERT INTO t4 (companynr, companyname) VALUES (00,'Unknown');
 --enable_query_log
 
 #
-# Test of stright join to force a full join.
+# Test of straight join to force a full join.
 #
 
 select STRAIGHT_JOIN t2.companynr,companyname from t4,t2 where t2.companynr=t4.companynr group by t2.companynr;
@@ -1592,7 +1592,7 @@ explain select distinct t2.companynr,t4.companynr from t2,t4 where t2.companynr=
 SET @@join_cache_level=@local_join_cache_level;
 
 #
-# Search using 'or' with the same referens group.
+# Search using 'or' with the same reference group.
 # An interval search will be done first with the first table and after that
 # the other table is referenced with a key with a 'test if key in use' for
 # each record

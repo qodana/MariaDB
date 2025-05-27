@@ -5,8 +5,6 @@ set optimizer_switch='materialization=off';
 set optimizer_switch='mrr=on,mrr_sort_keys=on,index_condition_pushdown=on';
 set join_cache_level=1;
 set @join_cache_level_for_subselect_test=@@join_cache_level;
-drop table if exists t1,t2,t3,t4,t5,t6,t7,t8,t11,t12;
-drop view if exists v2;
 call mtr.add_suppression("Sort aborted.*");
 set @subselect_tmp=@@optimizer_switch;
 set @@optimizer_switch=ifnull(@optimizer_switch_for_subselect_test,
@@ -70,12 +68,12 @@ SELECT 1 FROM (SELECT 1 as a) as b HAVING (SELECT a)=1;
 1
 1
 SELECT (SELECT 1), a;
-ERROR 42S22: Unknown column 'a' in 'field list'
+ERROR 42S22: Unknown column 'a' in 'SELECT'
 SELECT 1 as a FROM (SELECT 1) as b HAVING (SELECT a)=1;
 a
 1
 SELECT 1 FROM (SELECT (SELECT a) b) c;
-ERROR 42S22: Unknown column 'a' in 'field list'
+ERROR 42S22: Unknown column 'a' in 'SELECT'
 SELECT * FROM (SELECT 1 as id) b WHERE id IN (SELECT * FROM (SELECT 1 as id) c ORDER BY id);
 id
 1
@@ -92,9 +90,9 @@ ERROR 42000: You have an error in your SQL syntax; check the manual that corresp
 SELECT 1 FROM (SELECT 1) a PROCEDURE ANALYSE((SELECT 1));
 ERROR 42000: PROCEDURE does not support subqueries or stored functions
 SELECT (SELECT 1) as a FROM (SELECT 1) b WHERE (SELECT a) IS NULL;
-ERROR 42S22: Unknown column 'a' in 'field list'
+ERROR 42S22: Unknown column 'a' in 'SELECT'
 SELECT (SELECT 1) as a FROM (SELECT 1) b WHERE (SELECT a) IS NOT NULL;
-ERROR 42S22: Unknown column 'a' in 'field list'
+ERROR 42S22: Unknown column 'a' in 'SELECT'
 SELECT (SELECT 1,2,3) = ROW(1,2,3);
 (SELECT 1,2,3) = ROW(1,2,3)
 1
@@ -377,7 +375,7 @@ Warnings:
 Note	1276	Field or reference 'test.t6.clinic_uq' of SELECT #2 was resolved in SELECT #1
 Note	1003	select `test`.`t6`.`patient_uq` AS `patient_uq`,`test`.`t6`.`clinic_uq` AS `clinic_uq` from `test`.`t7` join `test`.`t6` where `test`.`t6`.`clinic_uq` = `test`.`t7`.`uq`
 select * from t1 where a= (select a from t2,t4 where t2.b=t4.b);
-ERROR 23000: Column 'a' in field list is ambiguous
+ERROR 23000: Column 'a' in SELECT is ambiguous
 drop table t1,t2,t3;
 CREATE TABLE t3 (a varchar(20),b char(1) NOT NULL default '0');
 INSERT INTO t3 VALUES ('W','a'),('A','c'),('J','b');
@@ -488,9 +486,9 @@ numeropost	maxnumrep
 43506	2
 40143	1
 SELECT (SELECT 1) as a FROM (SELECT 1 FROM t1 HAVING a=1) b;
-ERROR 42S22: Unknown column 'a' in 'having clause'
+ERROR 42S22: Unknown column 'a' in 'HAVING'
 SELECT 1 IN (SELECT 1 FROM t2 HAVING a);
-ERROR 42S22: Unknown column 'a' in 'having clause'
+ERROR 42S22: Unknown column 'a' in 'HAVING'
 SELECT * from t2 where topic IN (SELECT topic FROM t2 GROUP BY topic);
 mot	topic	date	pseudo
 joce	40143	2002-10-22	joce
@@ -583,7 +581,7 @@ KEY `pseudo` (`pseudo`,`numeropost`)
 SELECT (SELECT numeropost FROM t1 HAVING numreponse=a),numreponse FROM (SELECT * FROM t1) as a;
 ERROR 42S22: Reference 'numreponse' not supported (forward reference in item list)
 SELECT numreponse, (SELECT numeropost FROM t1 HAVING numreponse=a) FROM (SELECT * FROM t1) as a;
-ERROR 42S22: Unknown column 'a' in 'having clause'
+ERROR 42S22: Unknown column 'a' in 'HAVING'
 SELECT numreponse, (SELECT numeropost FROM t1 HAVING numreponse=1) FROM (SELECT * FROM t1) as a;
 numreponse	(SELECT numeropost FROM t1 HAVING numreponse=1)
 INSERT INTO t1 (numeropost,numreponse,pseudo) VALUES (1,1,'joce'),(1,2,'joce'),(1,3,'test');
@@ -1314,7 +1312,7 @@ Table	Create Table
 t1	CREATE TABLE `t1` (
   `a` int(1) NOT NULL DEFAULT 0,
   `(SELECT 1)` int(1) NOT NULL DEFAULT 0
-) ENGINE=MyISAM DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci
+) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
 drop table t1;
 CREATE TABLE t1 SELECT * FROM (SELECT 1 as a,(SELECT a)) a;
 SHOW CREATE TABLE t1;
@@ -1322,7 +1320,7 @@ Table	Create Table
 t1	CREATE TABLE `t1` (
   `a` int(1) NOT NULL DEFAULT 0,
   `(SELECT a)` int(1) NOT NULL DEFAULT 0
-) ENGINE=MyISAM DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci
+) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
 drop table t1;
 CREATE TABLE t1 SELECT * FROM (SELECT 1 as a,(SELECT a+0)) a;
 SHOW CREATE TABLE t1;
@@ -1330,7 +1328,7 @@ Table	Create Table
 t1	CREATE TABLE `t1` (
   `a` int(1) NOT NULL DEFAULT 0,
   `(SELECT a+0)` int(3) NOT NULL DEFAULT 0
-) ENGINE=MyISAM DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci
+) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
 drop table t1;
 CREATE TABLE t1 SELECT (SELECT 1 as a UNION SELECT 1+1 limit 1,1) as a;
 select * from t1;
@@ -1339,8 +1337,8 @@ a
 SHOW CREATE TABLE t1;
 Table	Create Table
 t1	CREATE TABLE `t1` (
-  `a` int(3) DEFAULT NULL
-) ENGINE=MyISAM DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci
+  `a` int(11) DEFAULT NULL
+) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
 drop table t1;
 create table t1 (a int);
 insert into t1 values (1), (2), (3);
@@ -1425,7 +1423,7 @@ INSERT INTO t1 VALUES (1);
 UPDATE t1 SET i=i+(SELECT MAX(i) FROM (SELECT 1) t) WHERE i=(SELECT MAX(i));
 UPDATE t1 SET i=i+1 WHERE i=(SELECT MAX(i));
 UPDATE t1 SET t.i=i+(SELECT MAX(i) FROM (SELECT 1) t);
-ERROR 42S22: Unknown column 't.i' in 'field list'
+ERROR 42S22: Unknown column 't.i' in 'SET'
 select * from t1;
 i
 3
@@ -1632,7 +1630,7 @@ create table t2 (s1 int);
 insert into t1 values (1);
 insert into t2 values (1);
 update t1 set  s1 = s1 + 1 where 1 = (select x.s1 as A from t2 WHERE t2.s1 > t1.s1 order by A);
-ERROR 42S22: Unknown column 'x.s1' in 'field list'
+ERROR 42S22: Unknown column 'x.s1' in 'SELECT'
 DROP TABLE t1, t2;
 CREATE TABLE t1 (s1 CHAR(5) COLLATE latin1_german1_ci,
 s2 CHAR(5) COLLATE latin1_swedish_ci);
@@ -1670,8 +1668,8 @@ drop table t1;
 #
 # IN optimisation test results
 #
-create table t1 (s1 char(5), index s1(s1));
-create table t2 (s1 char(5), index s1(s1));
+create table t1 (s1 char(5), index s1(s1)) charset=latin1;
+create table t2 (s1 char(5), index s1(s1)) charset=latin1;
 insert into t1 values ('a1'),('a2'),('a3');
 insert into t2 values ('a1'),('a2');
 select s1, s1 NOT IN (SELECT s1 FROM t2) from t1;
@@ -1869,11 +1867,11 @@ drop table t1, t2;
 create table t1 (s1 int);
 create table t2 (s1 int);
 select * from t1 where (select count(*) from t2 where t1.s2) = 1;
-ERROR 42S22: Unknown column 't1.s2' in 'where clause'
+ERROR 42S22: Unknown column 't1.s2' in 'WHERE'
 select * from t1 where (select count(*) from t2 group by t1.s2) = 1;
-ERROR 42S22: Unknown column 't1.s2' in 'group statement'
+ERROR 42S22: Unknown column 't1.s2' in 'GROUP BY'
 select count(*) from t2 group by t1.s2;
-ERROR 42S22: Unknown column 't1.s2' in 'group statement'
+ERROR 42S22: Unknown column 't1.s2' in 'GROUP BY'
 drop table t1, t2;
 CREATE TABLE t1(COLA FLOAT NOT NULL,COLB FLOAT NOT NULL,COLC VARCHAR(20) DEFAULT NULL,PRIMARY KEY (COLA, COLB));
 CREATE TABLE t2(COLA FLOAT NOT NULL,COLB FLOAT NOT NULL,COLC CHAR(1) NOT NULL,PRIMARY KEY (COLA));
@@ -2678,7 +2676,7 @@ INSERT INTO `t1` VALUES (1,0,0,700),(1,1,1,400),(1,5,5,400),(1,12,12,400),(1,12,
 CREATE TABLE `t2` ( `id` int(10) unsigned NOT NULL default '0', `pid` int(10) unsigned NOT NULL default '0', `map` smallint(6) unsigned NOT NULL default '0', `level` tinyint(4) unsigned NOT NULL default '0', `title` varchar(255) default NULL, PRIMARY KEY  (`id`,`pid`,`map`), KEY `level` (`level`), KEY `id` (`id`,`map`)) ;
 INSERT INTO `t2` VALUES (6,5,12,7,'a'),(12,0,0,7,'a'),(12,1,0,7,'a'),(12,5,5,7,'a'),(12,5,12,7,'a');
 SELECT b.sc FROM (SELECT (SELECT a.access FROM t1 a WHERE a.map = op.map AND a.slave = op.pid AND a.master = 1) ac FROM t2 op WHERE op.id = 12 AND op.map = 0) b;
-ERROR 42S22: Unknown column 'b.sc' in 'field list'
+ERROR 42S22: Unknown column 'b.sc' in 'SELECT'
 SELECT b.ac FROM (SELECT (SELECT a.access FROM t1 a WHERE a.map = op.map AND a.slave = op.pid AND a.master = 1) ac FROM t2 op WHERE op.id = 12 AND op.map = 0) b;
 ac
 700
@@ -2769,7 +2767,7 @@ drop table t1;
 create table t1 (a1 int);
 create table t2 (b1 int);
 select * from t1 where a2 > any(select b1 from t2);
-ERROR 42S22: Unknown column 'a2' in 'IN/ALL/ANY subquery'
+ERROR 42S22: Unknown column 'a2' in 'IN/ALL/ANY'
 select * from t1 where a1 > any(select b1 from t2);
 a1
 drop table t1,t2;
@@ -2995,8 +2993,8 @@ max(fld)
 drop table t1;
 set @tmp11867_optimizer_switch=@@optimizer_switch;
 set optimizer_switch='semijoin_with_cache=off';
-CREATE TABLE t1 (one int, two int, flag char(1));
-CREATE TABLE t2 (one int, two int, flag char(1));
+CREATE TABLE t1 (one int, two int, flag char(1)) CHARSET=latin1;
+CREATE TABLE t2 (one int, two int, flag char(1)) CHARSET=latin1;
 INSERT INTO t1 VALUES(1,2,'Y'),(2,3,'Y'),(3,4,'Y'),(5,6,'N'),(7,8,'N');
 INSERT INTO t2 VALUES(1,2,'Y'),(2,3,'Y'),(3,4,'Y'),(5,6,'N'),(7,8,'N');
 SELECT * FROM t1
@@ -3168,7 +3166,7 @@ retailerID varchar(8) NOT NULL,
 statusID   int(10) unsigned NOT NULL,
 changed    datetime NOT NULL,
 UNIQUE KEY retailerID (retailerID, statusID, changed)
-);
+) CHARSET=latin1;
 INSERT INTO t1 VALUES("0026", "1", "2005-12-06 12:18:56");
 INSERT INTO t1 VALUES("0026", "2", "2006-01-06 12:25:53");
 INSERT INTO t1 VALUES("0037", "1", "2005-12-06 12:18:56");
@@ -3191,7 +3189,7 @@ drop table t1;
 #
 create table t1(a int, primary key (a));
 insert into t1 values (10);
-create table t2 (a int primary key, b varchar(32), c int, unique key cb(c, b));
+create table t2 (a int primary key, b varchar(32), c int, unique key cb(c, b)) charset=latin1;
 insert into t2(a, c, b) values (1,10,'359'), (2,10,'35988'), (3,10,'35989');
 insert into t2(a, c, b) values (4,10,'360'), (5,10,'35998'), (6,10,'35999');
 analyze table t1;
@@ -3204,7 +3202,7 @@ ON r.a = (SELECT t2.a FROM t2 WHERE t2.c = t1.a AND t2.b <= '359899'
 id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
 1	PRIMARY	t1	system	PRIMARY	NULL	NULL	NULL	1	
 1	PRIMARY	r	const	PRIMARY	PRIMARY	4	const	1	
-2	SUBQUERY	t2	range	cb	cb	40	NULL	3	Using where
+2	SUBQUERY	t2	range	cb	cb	40	NULL	3	Using index condition
 SELECT sql_no_cache t1.a, r.a, r.b FROM t1 LEFT JOIN t2 r
 ON r.a = (SELECT t2.a FROM t2 WHERE t2.c = t1.a AND t2.b <= '359899'
             ORDER BY t2.c DESC, t2.b DESC LIMIT 1) WHERE t1.a = 10;
@@ -3283,13 +3281,13 @@ SHOW CREATE TABLE t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
   `sub_a` datetime DEFAULT NULL
-) ENGINE=MyISAM DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci
+) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
 CREATE TABLE t3 AS (SELECT a FROM t1 WHERE a < '2000-01-01') UNION (SELECT a FROM t1 WHERE a > '2000-01-01');
 SHOW CREATE TABLE t3;
 Table	Create Table
 t3	CREATE TABLE `t3` (
   `a` datetime DEFAULT NULL
-) ENGINE=MyISAM DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci
+) ENGINE=MyISAM DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_uca1400_ai_ci
 DROP TABLE t1,t2,t3;
 CREATE TABLE t1 (a int);
 INSERT INTO t1 VALUES (1), (2);
@@ -3654,7 +3652,7 @@ a	sum
 3	20
 4	40
 DROP TABLE t1,t2,t3;
-CREATE TABLE t1 (a varchar(5), b varchar(10));
+CREATE TABLE t1 (a varchar(5), b varchar(10)) CHARSET=latin1;
 INSERT INTO t1 VALUES
 ('AAA', 5), ('BBB', 4), ('BBB', 1), ('CCC', 2),
 ('CCC', 7), ('AAA', 2), ('AAA', 4), ('BBB', 3), ('AAA', 8);
@@ -3695,11 +3693,11 @@ delete from t1 where c <= 1140006215 and (select b from t2 where a = 2) = 1;
 drop table t1, t2;
 CREATE TABLE t1 (a INT);
 CREATE VIEW v1 AS SELECT * FROM t1 WHERE no_such_column = ANY (SELECT 1);
-ERROR 42S22: Unknown column 'no_such_column' in 'IN/ALL/ANY subquery'
+ERROR 42S22: Unknown column 'no_such_column' in 'IN/ALL/ANY'
 CREATE VIEW v2 AS SELECT * FROM t1 WHERE no_such_column = (SELECT 1);
-ERROR 42S22: Unknown column 'no_such_column' in 'where clause'
+ERROR 42S22: Unknown column 'no_such_column' in 'WHERE'
 SELECT * FROM t1 WHERE no_such_column = ANY (SELECT 1);
-ERROR 42S22: Unknown column 'no_such_column' in 'IN/ALL/ANY subquery'
+ERROR 42S22: Unknown column 'no_such_column' in 'IN/ALL/ANY'
 DROP TABLE t1;
 create table t1 (i int, j bigint);
 insert into t1 values (1, 2), (2, 2), (3, 2);
@@ -4345,10 +4343,10 @@ CREATE TABLE t1 (
 a varchar(255) default NULL,
 b timestamp NOT NULL default CURRENT_TIMESTAMP on update CURRENT_TIMESTAMP,
 INDEX idx(a,b)
-);
+) CHARSET=latin1;
 CREATE TABLE t2 (
 a varchar(255) default NULL
-);
+) CHARSET=latin1;
 INSERT INTO t1 VALUES ('abcdefghijk','2007-05-07 06:00:24');
 INSERT INTO t1 SELECT * FROM t1;
 INSERT INTO t1 SELECT * FROM t1;
@@ -4466,7 +4464,7 @@ DROP TABLE t1, t2, t3;
 SET @save_optimizer_switch=@@optimizer_switch;
 SET optimizer_switch='semijoin_with_cache=off';
 SET optimizer_switch='materialization=off';
-CREATE TABLE t1 (a CHAR(1), b VARCHAR(10));
+CREATE TABLE t1 (a CHAR(1), b VARCHAR(10)) CHARSET=latin1;
 INSERT INTO t1 VALUES ('a', 'aa');
 INSERT INTO t1 VALUES ('a', 'aaa');
 SELECT a,b FROM t1 WHERE b IN (SELECT a FROM t1);
@@ -4479,7 +4477,7 @@ id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
 1	PRIMARY	t1	ref	I2	I2	13	test.t1.a	1	Using index condition
 SELECT a,b FROM t1 WHERE b IN (SELECT a FROM t1);
 a	b
-CREATE TABLE t2 (a VARCHAR(1), b VARCHAR(10));
+CREATE TABLE t2 (a VARCHAR(1), b VARCHAR(10)) CHARSET=latin1;
 INSERT INTO t2 SELECT * FROM t1;
 CREATE INDEX I1 ON t2 (a);
 CREATE INDEX I2 ON t2 (b);
@@ -4504,11 +4502,11 @@ EXPLAIN
 SELECT a AS out_a, MIN(b) FROM t1
 WHERE b > (SELECT MIN(b) FROM t1 WHERE a = out_a)
 GROUP BY a;
-ERROR 42S22: Unknown column 'out_a' in 'where clause'
+ERROR 42S22: Unknown column 'out_a' in 'WHERE'
 SELECT a AS out_a, MIN(b) FROM t1
 WHERE b > (SELECT MIN(b) FROM t1 WHERE a = out_a)
 GROUP BY a;
-ERROR 42S22: Unknown column 'out_a' in 'where clause'
+ERROR 42S22: Unknown column 'out_a' in 'WHERE'
 EXPLAIN
 SELECT a AS out_a, MIN(b) FROM t1 t1_outer
 WHERE b > (SELECT MIN(b) FROM t1 WHERE a = t1_outer.a)
@@ -5497,7 +5495,7 @@ INSERT INTO t1 VALUES (repeat('b',@@global.max_allowed_packet));
 EXPLAIN EXTENDED SELECT DISTINCT 1 FROM t1,
 (SELECT DISTINCTROW a AS away FROM t1 GROUP BY a WITH ROLLUP) AS d1  
 WHERE t1.a = d1.a;
-ERROR 42S22: Unknown column 'd1.a' in 'where clause'
+ERROR 42S22: Unknown column 'd1.a' in 'WHERE'
 DROP TABLE t1;
 Set up test tables.
 CREATE TABLE t1 (
@@ -6098,9 +6096,9 @@ DROP TABLE t1;
 # BUG#12616253 - WRONG RESULT WITH EXISTS(SUBQUERY) (MISSING ROWS)
 # (duplicate of LP bug #888456)
 #
-CREATE TABLE t1 (f1 varchar(1));
+CREATE TABLE t1 (f1 varchar(1)) CHARSET=latin1;
 INSERT INTO t1 VALUES ('v'),('s');
-CREATE TABLE t2 (f1_key varchar(1), KEY (f1_key));
+CREATE TABLE t2 (f1_key varchar(1), KEY (f1_key)) CHARSET=latin1;
 INSERT INTO t2 VALUES ('j'),('v'),('c'),('m'),('d'),
 ('d'),('y'),('t'),('d'),('s');
 EXPLAIN
@@ -6143,13 +6141,13 @@ DROP TABLE t1,t2;
 CREATE TABLE ot (
 col_int_nokey int(11), 
 col_varchar_nokey varchar(1)
-) ;
+) CHARSET=latin1;
 INSERT INTO ot VALUES (1,'x');
 CREATE TABLE it1(
 col_int_key int(11), 
 col_varchar_key varchar(1), 
 KEY idx_cvk_cik (col_varchar_key,col_int_key)
-);
+) CHARSET=latin1;
 INSERT INTO it1 VALUES (NULL,'x'), (NULL,'f');
 CREATE TABLE it2 (
 col_int_key int(11),
@@ -6157,7 +6155,7 @@ col_varchar_key varchar(1),
 col_varchar_key2 varchar(1),
 KEY idx_cvk_cvk2_cik (col_varchar_key, col_varchar_key2, col_int_key),
 KEY idx_cvk_cik (col_varchar_key, col_int_key)
-);
+) CHARSET=latin1;
 INSERT INTO it2 VALUES (NULL,'x','x'), (NULL,'f','f');
 EXPLAIN
 SELECT col_int_nokey FROM ot 
@@ -6450,9 +6448,9 @@ DROP TABLE t1, t2;
 #
 # BUG#12616253 - WRONG RESULT WITH EXISTS(SUBQUERY) (MISSING ROWS)
 #
-CREATE TABLE t1 (f1 varchar(1));
+CREATE TABLE t1 (f1 varchar(1)) CHARSET=latin1;
 INSERT INTO t1 VALUES ('v'),('s');
-CREATE TABLE t2 (f1_key varchar(1), KEY (f1_key));
+CREATE TABLE t2 (f1_key varchar(1), KEY (f1_key)) CHARSET=latin1;
 INSERT INTO t2 VALUES ('j'),('v'),('c'),('m'),('d'),
 ('d'),('y'),('t'),('d'),('s');
 SELECT table1.f1, table2.f1_key
@@ -6930,7 +6928,7 @@ set optimizer_switch=@subselect_tmp;
 # lp:944706 Query with impossible or constant subquery in WHERE or HAVING is not
 # precomputed and thus not part of optimization
 #
-CREATE TABLE t1 ( a VARCHAR(16), KEY (a) );
+CREATE TABLE t1 ( a VARCHAR(16), KEY (a) ) CHARSET=latin1;
 INSERT INTO t1 VALUES ('Abilene'),('Akron'),('Albany'),('Albuquerque'),('Alexandria'),('Allentown'),
 ('Amarillo'),('Anaheim'),('Anchorage'),('Ann Arbor'),('Arden-Arcade');
 EXPLAIN
@@ -7005,6 +7003,7 @@ id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
 2	DEPENDENT SUBQUERY	t2	ALL	NULL	NULL	NULL	NULL	2	Using where; Using join buffer (flat, BNL join)
 3	SUBQUERY	t3	ALL	NULL	NULL	NULL	NULL	2	
 flush status;
+flush global status;
 SELECT
 (SELECT MIN(b) FROM t1, t2
 WHERE b = a AND (b = alias1.b OR EXISTS (SELECT * FROM t3))) AS m
@@ -7047,6 +7046,7 @@ id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
 2	SUBQUERY	t2	ALL	NULL	NULL	NULL	NULL	2	Using where; Using join buffer (flat, BNL join)
 3	SUBQUERY	t3	ALL	NULL	NULL	NULL	NULL	2	
 flush status;
+flush global status;
 SELECT
 (SELECT MIN(b) FROM t1, t2
 WHERE b = a AND (b = alias1.b OR EXISTS (SELECT * FROM t3))) AS m
@@ -7121,13 +7121,14 @@ WHERE SLEEP(0.1) OR c < 'p' OR b = ( SELECT MIN(b) FROM t2 );
 MIN(b)
 NULL
 # The following shows that t2 was indeed scanned with a full scan.
-show table_statistics;
-Table_schema	Table_name	Rows_read	Rows_changed	Rows_changed_x_#indexes
-test	t1	2	0	0
-test	t2	3	0	0
+select TABLE_SCHEMA, TABLE_NAME, ROWS_READ, ROWS_CHANGED, ROWS_CHANGED_X_INDEXES, ROWS_INSERTED, ROWS_UPDATED, ROWS_DELETED, KEY_READ_HITS, KEY_READ_MISSES from information_schema.table_statistics;
+TABLE_SCHEMA	TABLE_NAME	ROWS_READ	ROWS_CHANGED	ROWS_CHANGED_X_INDEXES	ROWS_INSERTED	ROWS_UPDATED	ROWS_DELETED	KEY_READ_HITS	KEY_READ_MISSES
+test	t1	2	0	0	0	0	0	0	0
+test	t2	3	0	0	0	0	0	1	0
+test	t3	0	0	0	0	0	0	0	1
 show index_statistics;
-Table_schema	Table_name	Index_name	Rows_read
-test	t2	b	1
+Table_schema	Table_name	Index_name	Rows_read	Queries
+test	t2	b	1	1
 set global userstat=@tmp_mdev410;
 DROP TABLE t1,t2,t3,t4;
 #
@@ -7188,23 +7189,26 @@ drop table t1;
 #
 # MDEV-7565: Server crash with Signal 6 (part 2)
 #
+create table t1 (id int not null primary key);
 Select 
-(Select Sum(`TestCase`.Revenue) From mysql.slow_log E           
-Where TestCase.TemplateID not in (Select 1 from mysql.slow_log where 2=2)
+(Select Sum(`TestCase`.Revenue) From t1 E
+Where TestCase.TemplateID not in (Select 1 from t1 where 2=2)
 ) As `ControlRev`
 From 
 (Select  3 as Revenue, 4 as TemplateID) As `TestCase` 
 Group By  TestCase.Revenue, TestCase.TemplateID;
 ControlRev
 NULL
+drop table t1;
 #
 # MDEV-7445:Server crash with Signal 6
 #
+create table t1 (id int not null primary key);
 CREATE PROCEDURE procedure2()
 BEGIN
 Select 
-(Select Sum(`TestCase`.Revenue) From mysql.slow_log E           
-Where TestCase.TemplateID not in (Select 1 from mysql.slow_log where 2=2)
+(Select Sum(`TestCase`.Revenue) From t1 E           
+Where TestCase.TemplateID not in (Select 1 from t1 where 2=2)
 ) As `ControlRev`
   From 
 (Select  3 as Revenue, 4 as TemplateID) As `TestCase` 
@@ -7217,6 +7221,7 @@ call procedure2();
 ControlRev
 NULL
 drop procedure procedure2;
+drop table t1;
 #
 # MDEV-7846:Server crashes in Item_subselect::fix
 #_fields or fails with Thread stack overrun
@@ -7522,7 +7527,109 @@ ERROR HY000: Illegal parameter data types row and boolean for operation '='
 SELECT ROW(1,2) = (1 = ANY (SELECT 1 UNION SELECT 2));
 ERROR HY000: Illegal parameter data types row and boolean for operation '='
 #
+# MDEV-29070 SIGSEGV in my_decimal::operator= and Assertion `0' failed
+# in Item_type_holder::val_decimal on SELECT
+#
+CREATE TABLE t1(a INT UNIQUE);
+INSERT INTO t1(a) VALUES (1);
+SELECT a FROM t1 WHERE (SELECT a, a UNION SELECT 1, a FROM t1) IN (SELECT 1, 1);
+a
+1
+SELECT a FROM t1 WHERE (SELECT a, a UNION SELECT 1, a FROM t1) IN (SELECT a, a);
+a
+1
+UPDATE t1 SET a = 0
+WHERE (SELECT a, a WHERE a < 0 INTERSECT
+SELECT +1 / +1, a FROM t1 WHERE a > -0+1) IN (SELECT a, a);
+SELECT a FROM t1 WHERE (SELECT a, a WHERE a < 0 INTERSECT
+SELECT + 1 / + 1, a FROM t1
+WHERE a > -0 + 1) IN (SELECT a, a);
+a
+CREATE TABLE x (x INT);
+INSERT INTO x (x) VALUES (1);
+UPDATE x SET x = 1 WHERE x = 1;
+INSERT INTO x (x) VALUES (1), (1);
+WITH RECURSIVE x (x) AS (
+SELECT 1 INTERSECT
+SELECT -(SELECT 1.000000 AS x
+UNION
+SELECT 1.000000 ORDER BY NOT x < 'x',
+-(SELECT 1 + x/1.000000 IN (1, 1) FROM x
+WHERE x ORDER BY 1 - x) DESC LIMIT 1 OFFSET 1
+) + 1 FROM x
+)
+SELECT DISTINCT x, 1, NULL, 1.000000
+FROM x
+WHERE (SELECT (SELECT x WHERE x IN (SELECT x FROM x))) >
+(SELECT (SELECT x ORDER BY x = x OR (x = 1 AND x = 1) DESC))
+ORDER BY x ASC, x DESC, x;
+ERROR HY000: Restrictions imposed on recursive definitions are violated for table 'x'
+DROP TABLE t1, x;
+#
 # End of 10.4 tests
+#
+#
+# MDEV-32656: ASAN errors in base_list_iterator::next /
+# setup_table_map upon 2nd execution of PS
+# (10.6 part)
+#
+CREATE TABLE t1 (id BIGINT);
+INSERT INTO t1 VALUES (1),(2);
+CREATE VIEW v1 AS SELECT * FROM t1;
+CREATE TABLE t2 (a INT);
+INSERT INTO t2 VALUES (2),(3);
+CREATE TABLE t3 (b INT);
+INSERT INTO t3 VALUES (3),(4);
+insert into t2 select (('e','e') IN (SELECT v1.id, v1.id FROM v1 JOIN t3));
+Warnings:
+Warning	1292	Truncated incorrect DECIMAL value: 'e'
+Warning	1292	Truncated incorrect DECIMAL value: 'e'
+drop view v1;
+drop table t1, t2, t3;
+#
+# End of 10.6 tests
+#
+#
+# MDEV-32656: ASAN errors in base_list_iterator::next /
+# setup_table_map upon 2nd execution of PS
+# (10.10 part)
+#
+CREATE TABLE t1 (id BIGINT);
+INSERT INTO t1 VALUES (1),(2);
+CREATE VIEW v1 AS SELECT * FROM t1;
+CREATE TABLE t2 (a INT);
+INSERT INTO t2 VALUES (2),(3);
+CREATE TABLE t3 (b INT);
+INSERT INTO t3 VALUES (3),(4);
+PREPARE stmt FROM "UPDATE t2 SET a = 1 WHERE (select 1 where ('e','e') IN (SELECT v1.id, v1.id FROM v1 JOIN t3)) <> 0";
+EXECUTE stmt;
+Warnings:
+Warning	1292	Truncated incorrect DECIMAL value: 'e'
+Warning	1292	Truncated incorrect DECIMAL value: 'e'
+EXECUTE stmt;
+Warnings:
+Warning	1292	Truncated incorrect DECIMAL value: 'e'
+Warning	1292	Truncated incorrect DECIMAL value: 'e'
+PREPARE stmt FROM "UPDATE t2 SET a = 1 WHERE ('e') IN (SELECT v1.id FROM v1 JOIN t3)";
+EXECUTE stmt;
+Warnings:
+Warning	1292	Truncated incorrect DECIMAL value: 'e'
+EXECUTE stmt;
+Warnings:
+Warning	1292	Truncated incorrect DECIMAL value: 'e'
+PREPARE stmt FROM "UPDATE t2 SET a = 1 WHERE ('e','e') IN (SELECT v1.id, v1.id FROM v1 JOIN t3)";
+EXECUTE stmt;
+Warnings:
+Warning	1292	Truncated incorrect DECIMAL value: 'e'
+Warning	1292	Truncated incorrect DECIMAL value: 'e'
+EXECUTE stmt;
+Warnings:
+Warning	1292	Truncated incorrect DECIMAL value: 'e'
+Warning	1292	Truncated incorrect DECIMAL value: 'e'
+DROP VIEW v1;
+DROP TABLE t1, t2, t3;
+#
+# End of 10.10 tests
 #
 set optimizer_switch=default;
 select @@optimizer_switch like '%materialization=on%';

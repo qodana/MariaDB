@@ -19,10 +19,6 @@
 #ifndef _SP_HEAD_H_
 #define _SP_HEAD_H_
 
-#ifdef USE_PRAGMA_INTERFACE
-#pragma interface			/* gcc class implementation */
-#endif
-
 /*
   It is necessary to include set_var.h instead of item.h because there
   are dependencies on include order for set_var.h and item.h. This
@@ -87,7 +83,7 @@ protected:
   { }
 
 protected:
-  virtual void change_env(THD *thd) const
+  void change_env(THD *thd) const override
   {
     thd->variables.collation_database= m_db_cl;
 
@@ -113,12 +109,16 @@ class sp_name : public Sql_alloc,
 public:
   bool       m_explicit_name;                   /**< Prepend the db name? */
 
-  sp_name(const LEX_CSTRING *db, const LEX_CSTRING *name,
+  sp_name(const Lex_ident_db_normalized &db, const LEX_CSTRING &name,
           bool use_explicit_name)
     : Database_qualified_name(db, name), m_explicit_name(use_explicit_name)
   {
-    if (lower_case_table_names && m_db.length)
-      m_db.length= my_casedn_str(files_charset_info, (char*) m_db.str);
+    /*
+      "db" can be {NULL,0} in case of a "DROP FUNCTION udf" statement.
+      Otherwise, a valid normalized non-NULL database name is expected.
+    */
+    DBUG_ASSERT((!db.str && !db.length) ||
+                !Lex_ident_fs(db).check_db_name_quick());
   }
 
   /** Create temporary sp_name object from MDL key. Store in qname_buff */
@@ -127,9 +127,6 @@ public:
   ~sp_name() = default;
 };
 
-
-bool
-check_routine_name(const LEX_CSTRING *ident);
 
 class sp_head :private Query_arena,
                public Database_qualified_name,
@@ -140,6 +137,16 @@ class sp_head :private Query_arena,
 
 protected:
   MEM_ROOT main_mem_root;
+#ifdef PROTECT_STATEMENT_MEMROOT
+  /*
+    The following data member is wholly for debugging purpose.
+    It can be used for possible crash analysis to determine how many times
+    the stored routine was executed before the mem_root marked read_only
+    was requested for a memory chunk. Additionally, a value of this data
+    member is output to the log with DBUG_PRINT.
+  */
+  ulong executed_counter;
+#endif
 public:
   /** Possible values of m_flags */
   enum {
@@ -186,7 +193,7 @@ public:
   */
   PSI_sp_share *m_sp_share;
 
-  Column_definition m_return_field_def; /**< This is used for FUNCTIONs only. */
+  Spvar_definition m_return_field_def; /**< This is used for FUNCTIONs only. */
 
   const char *m_tmp_query;	///< Temporary pointer to sub query string
 private:
@@ -279,7 +286,7 @@ public:
   /** Recursion level of the current SP instance. The levels are numbered from 0 */
   ulong m_recursion_level;
   /**
-    A list of diferent recursion level instances for the same procedure.
+    A list of different recursion level instances for the same procedure.
     For every recursion level we have a sp_head instance. This instances
     connected in the list. The list ordered by increasing recursion level
     (m_recursion_level).
@@ -292,7 +299,7 @@ public:
   /**
     Pointer to the first free (non-INVOKED) routine in the list of
     cached instances for this SP. This pointer is set only for the first
-    SP in the list of instences (see above m_first_cached_sp pointer).
+    SP in the list of instances (see above m_first_cached_sp pointer).
     The pointer equal to 0 if we have no free instances.
     For non-first instance value of this pointer meanless (point to itself);
   */
@@ -332,12 +339,12 @@ public:
 
 protected:
   sp_head(MEM_ROOT *mem_root, sp_package *parent, const Sp_handler *handler,
-          enum_sp_aggregate_type agg_type);
+          enum_sp_aggregate_type agg_type, sql_mode_t sql_mode);
   virtual ~sp_head();
 public:
   static void destroy(sp_head *sp);
   static sp_head *create(sp_package *parent, const Sp_handler *handler,
-                         enum_sp_aggregate_type agg_type,
+                         enum_sp_aggregate_type agg_type, sql_mode_t sql_mode,
                          MEM_ROOT *sp_mem_root);
 
   /// Initialize after we have reset mem_root
@@ -404,6 +411,8 @@ public:
   bool
   add_instr_preturn(THD *thd, sp_pcontext *spcont);
 
+  bool add_sp_block_destruct_variables(THD *thd, sp_pcontext *pctx);
+
   Item *adjust_assignment_source(THD *thd, Item *val, Item *val2);
   /**
     @param thd                     - the current thd
@@ -437,6 +446,14 @@ public:
   bool check_group_aggregate_instructions_function() const;
   bool check_group_aggregate_instructions_forbid() const;
   bool check_group_aggregate_instructions_require() const;
+
+  void sp_returns_type(THD *thd, String &result) const;
+
+protected:
+  void sp_returns_type_of(THD *thd, String &result,
+                          const Qualified_column_ident &ref) const;
+  void sp_returns_rowtype_of(THD *thd, String &result,
+                             const Table_ident &ref) const;
 private:
   /**
     Generate a code to set a single cursor parameter variable.
@@ -510,6 +527,7 @@ private:
   bool bind_input_param(THD *thd,
                         Item *arg_item,
                         uint arg_no,
+                        sp_rcontext *octx,
                         sp_rcontext *nctx,
                         bool is_function);
 
@@ -544,7 +562,7 @@ public:
       FOR index IN cursor(1,2,3)  -- cursor with parameters
 
     The code generated by this method does the following during SP run-time:
-    - Sets all cursor parameter vartiables from "parameters"
+    - Sets all cursor parameter variables from "parameters"
     - Initializes the index ROW-type variable from the cursor
       (the structure is copied from the cursor to the index variable)
     - The cursor gets opened
@@ -707,7 +725,9 @@ public:
 
   char *create_string(THD *thd, ulong *lenp);
 
-  Field *create_result_field(uint field_max_length, const LEX_CSTRING *field_name,
+  Field *create_result_field(uint field_max_length,
+                             const LEX_CSTRING *field_name,
+                             const Column_definition &def,
                              TABLE *table) const;
 
 
@@ -755,7 +775,7 @@ public:
     return false;
   }
   bool fill_spvar_definition(THD *thd, Column_definition *def,
-                             LEX_CSTRING *name)
+                             const Lex_ident_column *name)
   {
     def->field_name= *name;
     return fill_spvar_definition(thd, def);
@@ -797,6 +817,14 @@ public:
   bool spvar_fill_table_rowtype_reference(THD *thd, sp_variable *spvar,
                                           const LEX_CSTRING &db,
                                           const LEX_CSTRING &table);
+
+  bool spvar_def_fill_type_reference(THD *thd, Spvar_definition *def,
+                                 const LEX_CSTRING &table,
+                                 const LEX_CSTRING &column);
+  bool spvar_def_fill_type_reference(THD *thd, Spvar_definition *def,
+                                 const LEX_CSTRING &db,
+                                 const LEX_CSTRING &table,
+                                 const LEX_CSTRING &column);
 
   void set_c_chistics(const st_sp_chistics &chistics);
   void set_info(longlong created, longlong modified,
@@ -846,6 +874,11 @@ public:
       ip= NULL;
     return ip;
   }
+
+#ifdef PROTECT_STATEMENT_MEMROOT
+  int has_all_instrs_executed();
+  void reset_instrs_executed_counter();
+#endif
 
   /* Add tables used by routine to the table list. */
   bool add_used_tables_to_table_list(THD *thd,
@@ -908,7 +941,7 @@ public:
 
   /*
     Check EXECUTE access:
-    - in case of a standalone rotuine, for the routine itself
+    - in case of a standalone routine, for the routine itself
     - in case of a package routine, for the owner package body
   */
   bool check_execute_access(THD *thd) const;
@@ -1067,11 +1100,13 @@ private:
   sp_package(MEM_ROOT *mem_root,
              LEX *top_level_lex,
              const sp_name *name,
-             const Sp_handler *sph);
+             const Sp_handler *sph,
+             sql_mode_t sql_mode);
   ~sp_package();
 public:
   static sp_package *create(LEX *top_level_lex, const sp_name *name,
-                            const Sp_handler *sph, MEM_ROOT *sp_mem_root);
+                            const Sp_handler *sph, sql_mode_t sql_mode,
+                            MEM_ROOT *sp_mem_root);
 
   bool add_routine_declaration(LEX *lex)
   {
@@ -1083,9 +1118,9 @@ public:
     return m_routine_implementations.check_dup_qualified(lex->sphead) ||
            m_routine_implementations.push_back(lex, &main_mem_root);
   }
-  sp_package *get_package() { return this; }
-  void init_psi_share();
-  bool is_invoked() const
+  sp_package *get_package() override { return this; }
+  void init_psi_share() override;
+  bool is_invoked() const override
   {
     /*
       Cannot flush a package out of the SP cache when:
@@ -1109,6 +1144,10 @@ public:
 
 
 bool check_show_routine_access(THD *thd, sp_head *sp, bool *full_access);
+bool check_db_routine_access(THD *thd, privilege_t privilege,
+                             const char *db, const char *name,
+                             const Sp_handler *sph,
+                             bool no_errors);
 
 #ifndef NO_EMBEDDED_ACCESS_CHECKS
 bool

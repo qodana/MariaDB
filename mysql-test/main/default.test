@@ -1,5 +1,8 @@
 --source include/have_innodb.inc
 
+--source include/test_db_charset_latin1.inc
+
+
 #
 # Bug 10838
 # Insert causes warnings for no default values and corrupts tables
@@ -317,7 +320,7 @@ create or replace table t1 (a int default b, b int default a);
 show create table t1;
 
 --echo #
---echo # Refering to other columns
+--echo # Referring to other columns
 --echo #
 
 create or replace table t1 (a int default 1, b int default a);
@@ -1920,7 +1923,7 @@ INSERT INTO t2 VALUES (1),(2),(3),(2);
 INSERT INTO t1 SELECT a FROM t2 ON DUPLICATE KEY UPDATE a=DEFAULT;
 SELECT * FROM t1 order by a;
 truncate table t1;
-# efectively it is DEFALT
+# effectively it is DEFAULT
 INSERT INTO t1 SELECT a FROM t2 ON DUPLICATE KEY UPDATE a=IGNORE;
 SELECT * FROM t1 order by a;
 DROP TABLE t1,t2;
@@ -1946,7 +1949,7 @@ select * from t1 order by a;
 drop table t1;
 
 --echo #
---echo # DEVAULT & PS adoption
+--echo # DEFAULT & PS adoption
 --echo #
 
 
@@ -2186,3 +2189,6 @@ drop table t1;
 --echo #
 --echo # End of 10.4 test
 --echo #
+
+
+--source include/test_db_charset_restore.inc

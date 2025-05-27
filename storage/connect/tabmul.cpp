@@ -125,8 +125,11 @@ PTDB TDBMUL::Duplicate(PGLOBAL g)
 /*  have a LRECL that is the sum of the lengths of all components.     */
 /*  This is why we use a big filename array to take care of that.      */
 /***********************************************************************/
+
+PRAGMA_DISABLE_CHECK_STACK_FRAME
+
 bool TDBMUL::InitFileNames(PGLOBAL g)
-  {
+{
 #define PFNZ  4096
 #define FNSZ  (_MAX_DRIVE+_MAX_DIR+_MAX_FNAME+_MAX_EXT)
 	PTDBDIR dirp;
@@ -234,6 +237,7 @@ bool TDBMUL::InitFileNames(PGLOBAL g)
   NumFiles = n;
   return false;
   } // end of InitFileNames
+PRAGMA_REENABLE_CHECK_STACK_FRAME
 
 /***********************************************************************/
 /*  The table column list is the sub-table column list.                */
@@ -672,7 +676,7 @@ char* TDBDIR::Path(PGLOBAL g)
     PlugSetPath(Fpath, To_File, defp ? defp->GetPath() : NULL);
     _splitpath(Fpath, Drive, Direc, Fname, Ftype);
   } else
-    _makepath(Fpath, Drive, Direc, Fname, Ftype); // Usefull for TDBSDR
+    _makepath(Fpath, Drive, Direc, Fname, Ftype); // Useful for TDBSDR
 
   return Fpath;
 #else   // !_WIN32

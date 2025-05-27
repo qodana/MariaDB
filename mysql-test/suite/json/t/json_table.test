@@ -1,4 +1,5 @@
 --source include/have_sequence.inc
+--source include/test_db_charset_latin1.inc
 
 select * from json_table('[{"a": 1, "b": [11,111]}, {"a": 2, "b": [22,222]}]', '$[*]' COLUMNS( a INT PATH '$.a')) as tt;
 
@@ -416,7 +417,7 @@ SELECT * FROM JSON_TABLE(CONVERT('{"x":1}' USING utf8mb4), '$' COLUMNS(a INT PAT
 --echo #
 SET NAMES utf8;
 SELECT * FROM ( SELECT * FROM JSON_TABLE('{}', '$' COLUMNS( a BINARY(12) PATH '$.*', b VARCHAR(40) PATH '$[*]', c VARCHAR(8) PATH '$**.*')) AS jt ) AS sq;
-SET NAMES default;
+SET NAMES latin1;
 
 --echo #
 --echo # MDEV-25189 JSON_TABLE: Assertion `l_offset >= 0 && table->s->rec_buff_length - l_offset > 0' failed upon CREATE .. SELECT.
@@ -424,7 +425,7 @@ SET NAMES default;
 SET NAMES utf8;
 CREATE TABLE t1 AS SELECT * FROM JSON_TABLE('{}', '$' COLUMNS(a CHAR(16) PATH '$.*', b TIMESTAMP PATH '$**.*')) AS jt;
 DROP TABLE t1;
-SET NAMES default;
+SET NAMES latin1;
 
 
 --echo #
@@ -874,6 +875,52 @@ SELECT * FROM json_table('[{"name":"Jeans"}]', '$[*]'
 SELECT 1 FROM JSON_TABLE (row(1,2), '$' COLUMNS (o FOR ORDINALITY)) AS j;
 
 --echo #
+--echo # MDEV-30623 JSON_TABLE in subquery not correctly marked as correlated
+--echo # update_correlated_cache() fails to take JSON_TABLE functions in
+--echo # subqueries into account.
+--echo #
+
+create table t1(c json);
+insert into t1 values ('[{"x":"1"},{"x":"2"}]'),
+                      ('[{"x":"10"},{"x":"20"}]'),
+                      ('[{"x":"100"},{"x":"200"}]');
+select c,
+       (SELECT sum(x) FROM json_table(c, "$[*]" columns( x int path "$.x"))
+       AS jt) as SUBQ
+  from t1;
+
+explain select c,
+       (SELECT sum(x) FROM json_table(c, "$[*]" columns( x int path "$.x"))
+       AS jt) as SUBQ
+  from t1;
+
+drop table t1;
+
+--echo #
+--echo # MDEV-25822: JSON_TABLE: default values should allow non-string literals
+--echo #
+select * from json_table('{"a": "b"}', '$' columns(col1 varchar(32) path '$.fooo' default 0.5 on empty)) as T;
+select * from json_table('{"a": "b"}', '$' columns(col1 varchar(32) path '$.fooo' default 5 on empty)) as T;
+select * from json_table('{"a": "b"}', '$' columns(col1 varchar(32) path '$.fooo' default 'asdf' on empty)) as T;
+select * from json_table('{"a": "b"}', '$' columns(col1 varchar(32) path '$.fooo' default -0.5 on empty)) as T;
+select * from json_table('{"a": "b"}', '$' columns(col1 varchar(32) path '$.fooo' default 18446744073709551615 on empty)) as T;
+select * from json_table('{"a": "b"}', '$' columns(col1 varchar(32) path '$.fooo' default DATE '2021-01-01' on empty)) as T;
+
+create view v as select * from json_table('{"a": "b"}', '$' columns(col1 varchar(32) path '$.fooo' default 5 on empty)) as T;
+select * from v;
+show create view v;
+drop view v;
+create view v as select * from json_table('{"a": "b"}', '$' columns(col1 varchar(32) path '$.fooo' default 18446744073709551615 on empty)) as T;
+select * from v;
+show create view v;
+drop view v;
+create view v as select * from json_table('{"a": "b"}', '$' columns(col1 varchar(32) path '$.fooo' default 'asdf' on empty)) as T;
+select * from v;
+show create view v;
+drop view v;
+
+
+--echo #
 --echo # End of 10.6 tests
 --echo #
 
@@ -1091,3 +1138,5 @@ drop table t1;
 --echo #
 --echo # End of 11.0 tests
 --echo #
+
+--source include/test_db_charset_restore.inc

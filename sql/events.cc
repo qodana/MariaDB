@@ -898,12 +898,6 @@ Events::init(THD *thd, bool opt_noacl_or_bootstrap)
       res= TRUE;
       goto end;
     }
-    /*
-      The thread stack does not start from this function but we cannot
-      guess the real value. So better some value that doesn't assert than
-      no value.
-    */
-    thd->thread_stack= (char*) &thd;
     thd->store_globals();
     thd->set_query_inner((char*) STRING_WITH_LEN("intern:Events::init"),
                          default_charset_info);
@@ -923,6 +917,8 @@ Events::init(THD *thd, bool opt_noacl_or_bootstrap)
     We will need Event_db_repository anyway, even if the scheduler is
     disabled - to perform events DDL.
   */
+  DBUG_ASSERT(db_repository == 0);
+
   if (!(db_repository= new Event_db_repository))
   {
     res= TRUE; /* fatal error: request unireg_abort */

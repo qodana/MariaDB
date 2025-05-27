@@ -279,8 +279,8 @@ typedef struct st_partition_part_key_multi_range_hld
 } PARTITION_PART_KEY_MULTI_RANGE_HLD;
 
 
-extern "C" int cmp_key_part_id(void *key_p, uchar *ref1, uchar *ref2);
-extern "C" int cmp_key_rowid_part_id(void *ptr, uchar *ref1, uchar *ref2);
+extern "C" int cmp_key_part_id(void *key_p, const void *ref1, const void *ref2);
+extern "C" int cmp_key_rowid_part_id(void *ptr, const void *ref1, const void *ref2);
 
 class ha_partition final :public handler
 {
@@ -399,6 +399,7 @@ private:
   */
   bool m_innodb;                        // Are all underlying handlers
                                         // InnoDB
+  bool m_myisammrg;                     // Are any of the handlers of type MERGE
   /*
     When calling extra(HA_EXTRA_CACHE) we do not pass this to the underlying
     handlers immediately. Instead we cache it and call the underlying
@@ -448,9 +449,7 @@ private:
   /** Sorted array of partition ids in descending order of number of rows. */
   uint32 *m_part_ids_sorted_by_num_of_records;
   /* Compare function for my_qsort2, for reversed order. */
-  static int compare_number_of_records(ha_partition *me,
-                                       const uint32 *a,
-                                       const uint32 *b);
+  static int compare_number_of_records(void *me, const void *a, const void *b);
   /** keep track of partitions to call ha_reset */
   MY_BITMAP m_partitions_to_reset;
   /** partitions that returned HA_ERR_KEY_NOT_FOUND. */
@@ -485,6 +484,11 @@ public:
      m_part_info= part_info;
      m_is_sub_partitioned= part_info->is_sub_partitioned();
   }
+  Compare_keys compare_key_parts(
+    const Field &old_field,
+    const Column_definition &new_field,
+    const KEY_PART_INFO &old_part,
+    const KEY_PART_INFO &new_part) const override;
 
   void return_record_by_parent() override;
 
@@ -577,8 +581,7 @@ private:
   void cleanup_new_partition(uint part_count);
   int prepare_new_partition(TABLE *table, HA_CREATE_INFO *create_info,
                             handler *file, const char *part_name,
-                            partition_element *p_elem,
-                            uint disable_non_uniq_indexes);
+                            partition_element *p_elem);
   /*
     delete_table and rename_table uses very similar logic which
     is packed into this routine.
@@ -856,7 +859,8 @@ public:
                        const key_range * end_key,
                        bool eq_range, bool sorted) override;
   int read_range_next() override;
-
+  void set_end_range(const key_range *end_key,
+                     enum_range_scan_direction direction) override;
 
   HANDLER_BUFFER *m_mrr_buffer;
   uint *m_mrr_buffer_size;
@@ -988,6 +992,10 @@ private:
                                           handler *file, uint *n);
   static const uint NO_CURRENT_PART_ID= NOT_A_PARTITION_ID;
   int loop_partitions(handler_callback callback, void *param);
+  int loop_partitions_over_map(const MY_BITMAP *map,
+                               handler_callback callback,
+                               void *param);
+  int loop_read_partitions(handler_callback callback, void *param);
   int loop_extra_alter(enum ha_extra_function operations);
   void late_extra_cache(uint partition_id);
   void late_extra_no_cache(uint partition_id);
@@ -1309,10 +1317,6 @@ public:
       The underlying storage engine might support Rowid Filtering. But
       ha_partition does not forward the needed SE API calls, so the feature
       will not be used.
-
-      Note: It's the same with IndexConditionPushdown, except for its variant
-      of IndexConditionPushdown+BatchedKeyAccess (that one works). Because of
-      that, we do not clear HA_DO_INDEX_COND_PUSHDOWN here.
     */
     return part_flags & ~HA_DO_RANGE_FILTER_PUSHDOWN;
   }
@@ -1406,9 +1410,8 @@ private:
   {
     ulonglong nr= (((Field_num*) field)->unsigned_flag ||
                    field->val_int() > 0) ? field->val_int() : 0;
+    update_next_auto_inc_val();
     lock_auto_increment();
-    DBUG_ASSERT(part_share->auto_inc_initialized ||
-                !can_use_for_auto_inc_init());
     /* must check when the mutex is taken */
     if (nr >= part_share->next_auto_inc_val)
       part_share->next_auto_inc_val= nr + 1;
@@ -1466,7 +1469,7 @@ public:
 
     virtual int get_foreign_key_list(THD *thd,
     List<FOREIGN_KEY_INFO> *f_key_list)
-    virtual uint referenced_by_foreign_key()
+    bool referenced_by_foreign_key() const noexcept override
   */
     bool can_switch_engines() override;
   /*
@@ -1551,6 +1554,8 @@ public:
     const COND *cond_push(const COND *cond) override;
     void cond_pop() override;
     int info_push(uint info_type, void *info) override;
+    Item *idx_cond_push(uint keyno, Item* idx_cond) override;
+    void cancel_pushed_idx_cond() override;
 
     private:
     int handle_opt_partitions(THD *thd, HA_CHECK_OPT *check_opt, uint flags);
@@ -1579,8 +1584,8 @@ public:
     Enable/Disable Indexes are only supported by HEAP and MyISAM.
     -------------------------------------------------------------------------
   */
-    int disable_indexes(uint mode) override;
-    int enable_indexes(uint mode) override;
+    int disable_indexes(key_map map, bool persist) override;
+    int enable_indexes(key_map map, bool persist) override;
     int indexes_are_disabled() override;
 
   /*
@@ -1642,8 +1647,9 @@ public:
   int notify_tabledef_changed(LEX_CSTRING *db, LEX_CSTRING *table,
                               LEX_CUSTRING *frm, LEX_CUSTRING *version);
 
-  friend int cmp_key_rowid_part_id(void *ptr, uchar *ref1, uchar *ref2);
-  friend int cmp_key_part_id(void *key_p, uchar *ref1, uchar *ref2);
+  friend int cmp_key_rowid_part_id(void *ptr, const void *ref1,
+                                   const void *ref2);
+  friend int cmp_key_part_id(void *key_p, const void *ref1, const void *ref2);
 
   bool can_convert_nocopy(const Field &field,
                           const Column_definition &new_field) const override;

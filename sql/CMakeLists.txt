@@ -57,8 +57,8 @@ INCLUDE_DIRECTORIES(
 ${CMAKE_SOURCE_DIR}/include
 ${CMAKE_SOURCE_DIR}/sql
 ${LIBFMT_INCLUDE_DIR}
-${PCRE_INCLUDES}
-${ZLIB_INCLUDE_DIR}
+${PCRE_INCLUDE_DIRS}
+${ZLIB_INCLUDE_DIRS}
 ${SSL_INCLUDE_DIRS}
 ${CMAKE_BINARY_DIR}/sql
 ${CMAKE_SOURCE_DIR}/tpool
@@ -95,32 +95,38 @@ ENDIF()
 SET (SQL_SOURCE
                ${CMAKE_CURRENT_BINARY_DIR}/yy_mariadb.cc
                ${CMAKE_CURRENT_BINARY_DIR}/yy_oracle.cc
-              ../sql-common/client.c compat56.cc derror.cc des_key_file.cc
+              ../sql-common/client.c
+               cset_narrowing.cc
+               compat56.cc derror.cc des_key_file.cc
                discover.cc ../sql-common/errmsg.c
                field.cc field_conv.cc field_comp.cc
                filesort_utils.cc
                filesort.cc gstream.cc
                signal_handler.cc
-               handler.cc
+               handler.cc item_vectorfunc.cc
                hostname.cc init.cc item.cc item_buff.cc item_cmpfunc.cc
                item_create.cc item_func.cc item_geofunc.cc item_row.cc
                item_strfunc.cc item_subselect.cc item_sum.cc item_timefunc.cc
-               key.cc log.cc lock.cc
+               key.cc log.cc log_cache.cc lock.cc
                log_event.cc log_event_server.cc
                rpl_record.cc rpl_reporting.cc
                mf_iocache.cc my_decimal.cc
                mysqld.cc net_serv.cc  keycaches.cc
                ../sql-common/client_plugin.c
-               opt_range.cc
+               opt_range.cc vector_mhnsw.cc
+               opt_group_by_cardinality.cc
                opt_rewrite_date_cmp.cc
                opt_rewrite_remove_casefold.cc
+               opt_sargable_left.cc
                opt_sum.cc
+               opt_vcol_substitution.cc
                ../sql-common/pack.c parse_file.cc password.c procedure.cc
                protocol.cc records.cc repl_failsafe.cc rpl_filter.cc
                session_tracker.cc
                set_var.cc
                slave.cc sp.cc sp_cache.cc sp_head.cc sp_pcontext.cc
-               sp_rcontext.cc spatial.cc sql_acl.cc sql_analyse.cc sql_base.cc
+               sp_rcontext.cc sp_cursor.cc
+               spatial.cc sql_acl.cc sql_analyse.cc sql_base.cc
                sql_cache.cc sql_class.cc sql_client.cc sql_crypt.cc
                sql_cursor.cc sql_db.cc sql_delete.cc sql_derived.cc
                sql_digest.cc sql_do.cc
@@ -163,7 +169,7 @@ SET (SQL_SOURCE
                gcalc_slicescan.cc gcalc_tools.cc
                my_apc.cc mf_iocache_encr.cc item_jsonfunc.cc
                my_json_writer.cc json_schema.cc json_schema_helper.cc
-               rpl_gtid.cc rpl_parallel.cc
+               rpl_gtid.cc gtid_index.cc rpl_parallel.cc
                semisync.cc semisync_master.cc semisync_slave.cc
                semisync_master_ack_receiver.cc
                sp_instr.cc
@@ -171,7 +177,7 @@ SET (SQL_SOURCE
                lex_charset.cc charset_collations.cc
                sql_type.cc sql_mode.cc sql_type_json.cc
                sql_type_string.cc
-               sql_type_geom.cc
+               sql_type_geom.cc sql_type_vector.cc
                item_windowfunc.cc sql_window.cc
 	       sql_cte.cc
                item_vers.cc
@@ -184,14 +190,19 @@ SET (SQL_SOURCE
                table_cache.cc encryption.cc temporary_tables.cc
                json_table.cc
                proxy_protocol.cc backup.cc xa.cc
+               socketpair.c socketpair.h
+               opt_vcol_substitution.h
+               opt_vcol_substitution.cc
+               opt_hints_parser.cc opt_hints_parser.h scan_char.h
+               opt_hints.cc opt_hints.h
                ${CMAKE_CURRENT_BINARY_DIR}/lex_hash.h
                ${CMAKE_CURRENT_BINARY_DIR}/lex_token.h
                ${GEN_SOURCES}
                ${MYSYS_LIBWRAP_SOURCE}
 )
 
-IF(CMAKE_C_COMPILER_ID MATCHES "Clang" AND
-   NOT CMAKE_C_COMPILER_VERSION VERSION_LESS "13.0.0")
+MY_CHECK_CXX_COMPILER_FLAG(-Wno-unused-but-set-variable)
+IF(have_CXX__Wno_unused_but_set_variable)
   ADD_COMPILE_FLAGS(${CMAKE_CURRENT_BINARY_DIR}/yy_mariadb.cc
     ${CMAKE_CURRENT_BINARY_DIR}/yy_oracle.cc
     COMPILE_FLAGS "-Wno-unused-but-set-variable")
@@ -219,6 +230,9 @@ MYSQL_ADD_PLUGIN(partition ha_partition.cc STORAGE_ENGINE DEFAULT STATIC_ONLY
 RECOMPILE_FOR_EMBEDDED)
 MYSQL_ADD_PLUGIN(sql_sequence ha_sequence.cc STORAGE_ENGINE MANDATORY STATIC_ONLY
 RECOMPILE_FOR_EMBEDDED)
+MYSQL_ADD_PLUGIN(online_alter_log online_alter.cc STORAGE_ENGINE MANDATORY
+STATIC_ONLY NOT_EMBEDDED)
+
 
 ADD_LIBRARY(sql STATIC ${SQL_SOURCE})
 MAYBE_DISABLE_IPO(sql)
@@ -226,10 +240,10 @@ DTRACE_INSTRUMENT(sql)
 TARGET_LINK_LIBRARIES(sql
   mysys mysys_ssl dbug strings vio pcre2-8
   tpool
+  online_alter_log
   ${LIBWRAP} ${LIBCRYPT} ${CMAKE_DL_LIBS} ${CMAKE_THREAD_LIBS_INIT}
   ${SSL_LIBRARIES}
   ${LIBSYSTEMD})
-
 IF(TARGET pcre2)
   ADD_DEPENDENCIES(sql pcre2)
 ENDIF()
@@ -293,6 +307,7 @@ IF(MSVC OR CMAKE_SYSTEM_NAME MATCHES AIX)
    sql_builtins
   )
   IF(MSVC)
+    TARGET_LINK_LIBRARIES(server PRIVATE icuuc icuin)
     IF(NOT WITHOUT_DYNAMIC_PLUGINS)
      SET_TARGET_PROPERTIES(server PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS TRUE)
     ENDIF()

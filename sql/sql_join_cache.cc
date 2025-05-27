@@ -23,10 +23,6 @@
   @{
 */
 
-#ifdef USE_PRAGMA_IMPLEMENTATION
-#pragma implementation				// gcc: Class implementation
-#endif
-
 #include "mariadb.h"
 #include "key.h"
 #include "sql_base.h"
@@ -57,7 +53,7 @@ static void save_or_restore_used_tabs(JOIN_TAB *join_tab, bool save);
     the field value is to be copied and the length of the copied fragment. 
     Before returning the result the function increments the value of
     *field by 1.
-    The function ignores the fields 'blob_length' and 'ofset' of the
+    The function ignores the fields 'blob_length' and 'offset' of the
     descriptor.
 
   RETURN VALUE
@@ -198,7 +194,7 @@ void JOIN_CACHE::calc_record_fields()
 
         We will need to store columns of SJ-inner tables (it_X_Y.*), but we're
         not interested in storing the columns of materialization tables
-        themselves. Beause of that, if the first non-const top-level table is a
+        themselves. Because of that, if the first non-const top-level table is a
         materialized table, we move to its bush_children:
       */
       tab= join->join_tab + join->const_tables;
@@ -647,7 +643,7 @@ void JOIN_CACHE::create_remaining_fields()
     used to store record lengths.
     The function also calculates the maximal length of the representation
     of record in the cache excluding blob_data. This value is used when
-    making a dicision whether more records should be added into the join
+    making a decision whether more records should be added into the join
     buffer or not.
   
   RETURN VALUE
@@ -1270,7 +1266,7 @@ bool JOIN_CACHE::check_emb_key_usage()
         - null bitmaps for all tables,
         - null row flags for all tables
     (4) values of all data fields including
-        - full images of those fixed legth data fields that cannot have 
+        - full images of those fixed length data fields that cannot have
           trailing spaces
         - significant part of fixed length fields that can have trailing spaces
           with the prepanded length 
@@ -1595,6 +1591,7 @@ bool JOIN_CACHE::put_record()
 {
   bool is_full;
   uchar *link= 0;
+  DBUG_ASSERT(!for_explain_only);
   if (prev_cache)
     link= prev_cache->get_curr_rec_link();
   write_record_data(link, &is_full);
@@ -1630,7 +1627,6 @@ bool JOIN_CACHE::put_record()
 bool JOIN_CACHE::get_record()
 { 
   bool res;
-  ANALYZE_START_TRACKING(thd(), join_tab->jbuf_unpack_tracker);
   uchar *prev_rec_ptr= 0;
   if (with_length)
     pos+= size_of_rec_len;
@@ -1646,7 +1642,6 @@ bool JOIN_CACHE::get_record()
     if (prev_cache)
       prev_cache->get_record_by_pos(prev_rec_ptr);
   }
-  ANALYZE_STOP_TRACKING(thd(), join_tab->jbuf_unpack_tracker);
   return res; 
 }
 
@@ -2062,10 +2057,11 @@ bool JOIN_CACHE::skip_if_matched()
       - In the case of a semi-nest the match flag may be in two states
         {MATCH_NOT_FOUND, MATCH_FOUND}. The record is skipped if the flag is set
         to MATCH_FOUND.
-      - In the case of a outer join nest when not_exists optimization is applied
-        the match may be in three states {MATCH_NOT_FOUND, MATCH_IMPOSSIBLE,
-        MATCH_FOUND. The record is skipped if the flag is set to MATCH_FOUND or
-        to MATCH_IMPOSSIBLE.
+      - In the case of an outer join the match may be in three states
+        {MATCH_NOT_FOUND, MATCH_IMPOSSIBLE, MATCH_FOUND}.
+        If not_exists optimization is applied the record is skipped when
+        the flag is set to MATCH_FOUND or to MATCH_IMPOSSIBLE. Otherwise
+        the record is skipped only when the flag is set to MATCH_IMPOSSIBLE.
 
     If the record is skipped the value of 'pos' is set to point to the position
     right after the record.
@@ -2088,13 +2084,13 @@ bool JOIN_CACHE::skip_if_not_needed_match()
   if (prev_cache)
     offset+= prev_cache->get_size_of_rec_offset();
 
-  if (!join_tab->check_only_first_match())
-    return FALSE;
-
   match_fl= get_match_flag_by_pos(pos+offset);
   skip= join_tab->first_sj_inner_tab ?
-        match_fl == MATCH_FOUND :           // the case of semi-join
-        match_fl != MATCH_NOT_FOUND;        // the case of outer-join
+          match_fl == MATCH_FOUND :           // the case of semi-join
+          not_exists_opt_is_applicable &&
+          join_tab->table->reginfo.not_exists_optimize ?
+            match_fl != MATCH_NOT_FOUND :     // the case of not exist opt
+            match_fl == MATCH_IMPOSSIBLE;
 
   if (skip)
   {
@@ -2351,8 +2347,12 @@ enum_nested_loop_state JOIN_CACHE::join_matching_records(bool skip_last)
   if ((rc= join_tab_execution_startup(join_tab)) < 0)
     goto finish2;
 
-  if (join_tab->need_to_build_rowid_filter)
-    join_tab->build_range_rowid_filter();
+  if (join_tab->need_to_build_rowid_filter && 
+      join_tab->build_range_rowid_filter())
+  {
+    rc= NESTED_LOOP_ERROR;
+    goto finish2;
+  }
 
   /* Prepare to retrieve all records of the joined table */
   if (unlikely((error= join_tab_scan->open())))
@@ -2393,7 +2393,7 @@ enum_nested_loop_state JOIN_CACHE::join_matching_records(bool skip_last)
         as candidates for matches.
       */
 
-      bool not_exists_opt_is_applicable= true;
+      not_exists_opt_is_applicable= true;
       if (check_only_first_match && join_tab->first_inner)
       {
         /*
@@ -2418,8 +2418,9 @@ enum_nested_loop_state JOIN_CACHE::join_matching_records(bool skip_last)
         }
       }
 
-      if (!check_only_first_match ||
-	  (join_tab->first_inner && !not_exists_opt_is_applicable) ||
+      if ((!join_tab->on_precond &&
+           (!check_only_first_match ||
+            (join_tab->first_inner && !not_exists_opt_is_applicable))) ||
           !skip_next_candidate_for_match(rec_ptr))
       {
         ANALYZE_START_TRACKING(join->thd, join_tab->jbuf_unpack_tracker);
@@ -2644,7 +2645,7 @@ inline bool JOIN_CACHE::check_match(uchar *rec_ptr)
 
   NOTES
     The same implementation of the virtual method join_null_complements
-    is used for BNL/BNLH/BKA/BKA join algorthm.
+    is used for BNL/BNLH/BKA/BKA join algorithm.
       
   RETURN VALUE
     return one of enum_nested_loop_state.
@@ -2714,6 +2715,7 @@ bool JOIN_CACHE::save_explain_data(EXPLAIN_BKA_TYPE *explain)
   explain->incremental= MY_TEST(prev_cache);
 
   explain->join_buffer_size= get_join_buffer_size();
+  explain->is_bka= false;
 
   switch (get_join_alg()) {
   case BNL_JOIN_ALG:
@@ -2724,9 +2726,11 @@ bool JOIN_CACHE::save_explain_data(EXPLAIN_BKA_TYPE *explain)
     break;
   case BKA_JOIN_ALG:
     explain->join_alg= "BKA";
+    explain->is_bka= true;
     break;
   case BKAH_JOIN_ALG:
     explain->join_alg= "BKAH";
+    explain->is_bka= true;
     break;
   default:
     DBUG_ASSERT(0);
@@ -2831,7 +2835,7 @@ int JOIN_CACHE_HASHED::init(bool for_explain)
   if (for_explain)
     DBUG_RETURN(0);
 
-  if (!(key_buff= (uchar*) join->thd->alloc(key_length)))
+  if (!(key_buff= join->thd->alloc<uchar>(key_length)))
     DBUG_RETURN(1);
 
   /* Take into account a reference to the next record in the key chain */
@@ -4565,7 +4569,7 @@ bool JOIN_CACHE_BKA::skip_index_tuple(range_id_t range_info)
 {
   DBUG_ENTER("JOIN_CACHE_BKA::skip_index_tuple");
   get_record_by_pos((uchar*)range_info);
-  DBUG_RETURN(!join_tab->cache_idx_cond->val_int());
+  DBUG_RETURN(!join_tab->cache_idx_cond->val_bool());
 }
 
 
@@ -4724,7 +4728,7 @@ DESCRIPTION
   matching the record loaded into the record buffer for join_tab when
   performing join operation by BKAH join algorithm. With BKAH algorithm, if
   association labels are used, then record loaded into the record buffer 
-  for join_tab always has a direct reference to the chain of the mathing
+  for join_tab always has a direct reference to the chain of the matching
   records from the join buffer. If association labels are not used then
   then the chain of the matching records is obtained by the call of the
   get_key_chain_by_join_key function.
@@ -4829,7 +4833,7 @@ bool JOIN_CACHE_BKAH::skip_index_tuple(range_id_t range_info)
     next_rec_ref_ptr= get_next_rec_ref(next_rec_ref_ptr);
     uchar *rec_ptr= next_rec_ref_ptr + rec_fields_offset;
     get_record_by_pos(rec_ptr);
-    if (join_tab->cache_idx_cond->val_int())
+    if (join_tab->cache_idx_cond->val_bool())
       DBUG_RETURN(FALSE);
   } while(next_rec_ref_ptr != last_rec_ref_ptr);
   DBUG_RETURN(TRUE);

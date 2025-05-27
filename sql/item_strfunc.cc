@@ -27,10 +27,6 @@
     (This shouldn't be needed)
 */
 
-#ifdef USE_PRAGMA_IMPLEMENTATION
-#pragma implementation				// gcc: Class implementation
-#endif
-
 #include "mariadb.h"                          // HAVE_*
 
 #include "sql_priv.h"
@@ -61,9 +57,8 @@ C_MODE_END
 #endif
 
 /* fmtlib include (https://fmt.dev/). */
-#define FMT_STATIC_THOUSANDS_SEPARATOR ','
 #define FMT_HEADER_ONLY 1
-#include "fmt/format-inl.h"
+#include "fmt/args.h"
 
 size_t username_char_length= USERNAME_CHAR_LENGTH;
 
@@ -71,14 +66,21 @@ size_t username_char_length= USERNAME_CHAR_LENGTH;
   Calculate max length of string from length argument to LEFT and RIGHT
 */
 
-static uint32 max_length_for_string(Item *item)
+static uint32 max_length_for_string(Item *item, bool *neg)
 {
+  *neg= false;
   ulonglong length= item->val_int();
-  /* Note that if value is NULL, val_int() returned 0 */
+  if (item->null_value)
+    return 0;
+  if (length > (ulonglong) LONGLONG_MAX && !item->unsigned_flag)
+  {
+    *neg= true;
+    return 0; // Negative
+  }
   if (length > (ulonglong) INT_MAX32)
   {
-    /* Limit string length to maxium string length in MariaDB (2G) */
-    length= item->unsigned_flag ? (ulonglong) INT_MAX32 : 0;
+    /* Limit string length to maximum string length in MariaDB (2G) */
+    length= (ulonglong) INT_MAX32;
   }
   return (uint32) length;
 }
@@ -160,6 +162,7 @@ double Item_str_func::val_real()
 
 longlong Item_str_func::val_int()
 {
+  DBUG_ASSERT(!is_cond());
   DBUG_ASSERT(fixed());
   StringBuffer<22> tmp;
   String *res= val_str(&tmp);
@@ -326,7 +329,8 @@ const char *block_encryption_mode_values[]= {
   "aes-128-cbc", "aes-192-cbc", "aes-256-cbc",
   "aes-128-ctr", "aes-192-ctr", "aes-256-ctr",
   NullS };
-TYPELIB block_encryption_mode_typelib= {9, 0, block_encryption_mode_values, 0};
+TYPELIB block_encryption_mode_typelib=
+        CREATE_TYPELIB_FOR(block_encryption_mode_values);
 static inline uint block_encryption_mode_to_key_length(ulong bem)
 { return (bem % 3 + 2) * 64; }
 static inline my_aes_mode block_encryption_mode_to_aes_mode(ulong bem)
@@ -671,10 +675,7 @@ err:
 
 const char *histogram_types[] =
     {"SINGLE_PREC_HB", "DOUBLE_PREC_HB", "JSON_HB", 0};
-static TYPELIB histogram_types_typelib=
-  { array_elements(histogram_types),
-    "histogram_types",
-    histogram_types, NULL};
+static TYPELIB histogram_types_typelib= CREATE_TYPELIB_FOR(histogram_types);
 const char *representation_by_type[]= {"%.3f", "%.5f"};
 
 String *Item_func_decode_histogram::val_str(String *str)
@@ -839,7 +840,7 @@ String *Item_func_concat_operator_oracle::val_str(String *str)
     goto null;
 
   if (res != str)
-    str->copy(res->ptr(), res->length(), res->charset());
+    str->copy_or_move(res->ptr(), res->length(), res->charset());
 
   for (i++ ; i < arg_count ; i++)
   {
@@ -913,7 +914,7 @@ bool Item_func_des_encrypt::fix_length_and_dec(THD *thd)
 String *Item_func_des_encrypt::val_str(String *str)
 {
   DBUG_ASSERT(fixed());
-#if defined(HAVE_OPENSSL) && !defined(EMBEDDED_LIBRARY)
+#if defined(HAVE_des) && !defined(EMBEDDED_LIBRARY)
   uint code= ER_WRONG_PARAMETERS_TO_PROCEDURE;
   DES_cblock ivec;
   struct st_des_keyblock keyblock;
@@ -1002,8 +1003,8 @@ error:
   THD *thd= current_thd;
   push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
                       ER_FEATURE_DISABLED, ER_THD(thd, ER_FEATURE_DISABLED),
-                      "des_encrypt", "--with-ssl");
-#endif /* defined(HAVE_OPENSSL) && !defined(EMBEDDED_LIBRARY) */
+                      "des_encrypt", "openssl des cipher (HAVE_des)");
+#endif /* defined(HAVE_des) && !defined(EMBEDDED_LIBRARY) */
   null_value=1;
   return 0;
 }
@@ -1024,7 +1025,7 @@ bool Item_func_des_decrypt::fix_length_and_dec(THD *thd)
 String *Item_func_des_decrypt::val_str(String *str)
 {
   DBUG_ASSERT(fixed());
-#if defined(HAVE_OPENSSL) && !defined(EMBEDDED_LIBRARY)
+#if defined(HAVE_des) && !defined(EMBEDDED_LIBRARY)
   uint code= ER_WRONG_PARAMETERS_TO_PROCEDURE;
   DES_cblock ivec;
   struct st_des_keyblock keyblock;
@@ -1099,9 +1100,9 @@ wrong_key:
     THD *thd= current_thd;
     push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
                         ER_FEATURE_DISABLED, ER_THD(thd, ER_FEATURE_DISABLED),
-                        "des_decrypt", "--with-ssl");
+                        "des_decrypt", "openssl des cipher (HAVE_des)");
   }
-#endif /* defined(HAVE_OPENSSL) && !defined(EMBEDDED_LIBRARY) */
+#endif /* defined(HAVE_des) && !defined(EMBEDDED_LIBRARY) */
   null_value=1;
   return 0;
 }
@@ -1347,8 +1348,7 @@ bool Item_func_reverse::fix_length_and_dec(THD *thd)
     Fix that this works with binary strings when using USE_MB 
 */
 
-String *Item_func_replace::val_str_internal(String *str,
-                                            String *empty_string_for_null)
+String *Item_func_replace::val_str_internal(String *str, bool null_to_empty)
 {
   DBUG_ASSERT(fixed());
   String *res,*res2,*res3;
@@ -1366,13 +1366,8 @@ String *Item_func_replace::val_str_internal(String *str,
   res=args[0]->val_str(str);
   if (args[0]->null_value)
     goto null;
-  res2=args[1]->val_str(&tmp_value);
-  if (args[1]->null_value)
-  {
-    if (!empty_string_for_null)
-      goto null;
-    res2= empty_string_for_null;
-  }
+  if (!(res2= args[1]->val_str_null_to_empty(&tmp_value, null_to_empty)))
+    goto null;
   res->set_charset(collation.collation);
 
 #ifdef USE_MB
@@ -1389,12 +1384,8 @@ String *Item_func_replace::val_str_internal(String *str,
   if (binary_cmp && (offset=res->strstr(*res2)) < 0)
     return res;
 #endif
-  if (!(res3=args[2]->val_str(&tmp_value2)))
-  {
-    if (!empty_string_for_null)
-      goto null;
-    res3= empty_string_for_null;
-  }
+  if (!(res3= args[2]->val_str_null_to_empty(&tmp_value2, null_to_empty)))
+    goto null;
   from_length= res2->length();
   to_length=   res3->length();
 
@@ -1477,7 +1468,7 @@ redo:
     }
     while ((offset=res->strstr(*res2,(uint) offset)) >= 0);
   }
-  if (empty_string_for_null && !res->length())
+  if (null_to_empty && !res->length())
     goto null;
 
   return res;
@@ -1555,12 +1546,25 @@ bool Item_func_sformat::fix_length_and_dec(THD *thd)
 namespace fmt {
   template <> struct formatter<String>: formatter<string_view> {
     template <typename FormatContext>
+    auto format(String c, FormatContext& ctx) const -> decltype(ctx.out()) {
+      string_view name = { c.ptr(), c.length() };
+      return formatter<string_view>::format(name, ctx);
+    };
+    /* needed below function for libfmt-7.1.3 compatibility, (not 9.1.0+) */
+    template <typename FormatContext>
     auto format(String c, FormatContext& ctx) -> decltype(ctx.out()) {
       string_view name = { c.ptr(), c.length() };
       return formatter<string_view>::format(name, ctx);
     };
   };
 };
+
+struct fmt_locale_comma : std::numpunct<char>
+{
+  char do_thousands_sep() const override { return ','; }
+  std::string do_grouping() const override { return "\3"; }
+};
+static std::locale fmt_locale(std::locale(), new fmt_locale_comma);
 
 /*
   SFORMAT(format_string, ...)
@@ -1570,37 +1574,15 @@ namespace fmt {
 */
 String *Item_func_sformat::val_str(String *res)
 {
-  /*
-    A union that stores a numeric format arg value.
-    fmt::detail::make_arg does not accept temporaries, so all of its numeric
-    args are temporarily stored in the fmt_args array.
-    See: https://github.com/fmtlib/fmt/issues/3596
-  */
-  union Format_arg_store {
-    longlong val_int;
-    float    val_float;
-    double   val_double;
-  };
-
   DBUG_ASSERT(fixed());
-  using                         ctx=      fmt::format_context;
-  String                       *fmt_arg=  NULL;
-  String                       *parg=     NULL;
-  fmt::format_args::format_arg *vargs=    NULL;
-  Format_arg_store             *fmt_args= NULL;
+  using         ArgStore= fmt::dynamic_format_arg_store<fmt::format_context>;
+  String       *fmt_arg=  NULL;
+  String       *parg=     NULL;
+  ArgStore      arg_store;
 
   null_value= true;
   if (!(fmt_arg= args[0]->val_str(res)))
     return NULL;
-
-  if (!(vargs= new fmt::format_args::format_arg[arg_count - 1]))
-    return NULL;
-
-  if (!(fmt_args= new Format_arg_store[arg_count - 1]))
-  {
-    delete [] vargs;
-    return NULL;
-  }
 
   /* Creates the array of arguments for vformat */
   for (uint carg= 1; carg < arg_count; carg++)
@@ -1608,37 +1590,26 @@ String *Item_func_sformat::val_str(String *res)
     switch (args[carg]->result_type())
     {
     case INT_RESULT:
-      fmt_args[carg-1].val_int= args[carg]->val_int();
-      vargs[carg-1]= fmt::detail::make_arg<ctx>(fmt_args[carg-1].val_int);
+      arg_store.push_back(args[carg]->val_int());
       break;
     case DECIMAL_RESULT: // TODO
     case REAL_RESULT:
       if (args[carg]->field_type() == MYSQL_TYPE_FLOAT)
-      {
-        fmt_args[carg-1].val_float= (float)args[carg]->val_real();
-        vargs[carg-1]= fmt::detail::make_arg<ctx>(fmt_args[carg-1].val_float);
-      }
+        arg_store.push_back((float)args[carg]->val_real());
       else
-      {
-        fmt_args[carg-1].val_double= args[carg]->val_real();
-        vargs[carg-1]= fmt::detail::make_arg<ctx>(fmt_args[carg-1].val_double);
-      }
+        arg_store.push_back(args[carg]->val_real());
       break;
     case STRING_RESULT:
       if (!(parg= args[carg]->val_str(&val_arg[carg-1])))
       {
-        delete [] vargs;
-        delete [] fmt_args;
         return NULL;
       }
-      vargs[carg-1]= fmt::detail::make_arg<ctx>(*parg);
+      arg_store.push_back(*parg);
       break;
     case TIME_RESULT: // TODO
     case ROW_RESULT: // TODO
     default:
       DBUG_ASSERT(0);
-      delete [] vargs;
-      delete [] fmt_args;
       return NULL;
     }
   }
@@ -1647,8 +1618,7 @@ String *Item_func_sformat::val_str(String *res)
   /* Create the string output  */
   try
   {
-    auto text = fmt::vformat(fmt_arg->c_ptr_safe(),
-                             fmt::format_args(vargs, arg_count-1));
+    auto text = fmt::vformat(fmt_locale, fmt_arg->c_ptr_safe(), arg_store);
     res->length(0);
     res->set_charset(collation.collation);
     res->append(text.c_str(), text.size(), fmt_arg->charset());
@@ -1661,8 +1631,6 @@ String *Item_func_sformat::val_str(String *res)
                         ER_THD(thd, WARN_SFORMAT_ERROR), ex.what());
     null_value= true;
   }
-  delete [] vargs;
-  delete [] fmt_args;
   return null_value ? NULL : res;
 }
 
@@ -1672,6 +1640,7 @@ String *Item_func_sformat::val_str(String *res)
 
 bool Item_func_random_bytes::fix_length_and_dec(THD *thd)
 {
+  set_maybe_null();
   used_tables_cache|= RAND_TABLE_BIT;
   if (args[0]->can_eval_in_optimize())
   {
@@ -1801,25 +1770,28 @@ bool Item_func_regexp_replace::append_replacement(String *str,
 }
 
 
-String *Item_func_regexp_replace::val_str(String *str)
+String *Item_func_regexp_replace::val_str_internal(String *str,
+                                                   bool null_to_empty)
 {
   DBUG_ASSERT(fixed());
   char buff0[MAX_FIELD_WIDTH];
   char buff2[MAX_FIELD_WIDTH];
   String tmp0(buff0,sizeof(buff0),&my_charset_bin);
   String tmp2(buff2,sizeof(buff2),&my_charset_bin);
-  String *source= args[0]->val_str(&tmp0);
-  String *replace= args[2]->val_str(&tmp2);
+  String *source, *replace;
   LEX_CSTRING src, rpl;
   size_t startoffset= 0;
 
-  if ((null_value= (args[0]->null_value || args[2]->null_value ||
-                    re.recompile(args[1]))))
-    return (String *) 0;
-
+  source= args[0]->val_str(&tmp0);
+  if (!source)
+    goto err;
+  replace= args[2]->val_str_null_to_empty(&tmp2, null_to_empty);
+  if (!replace || re.recompile(args[1]))
+    goto err;
   if (!(source= re.convert_if_needed(source, &re.subject_converter)) ||
       !(replace= re.convert_if_needed(replace, &re.replace_converter)))
     goto err;
+  null_value= false;
 
   source->get_value(&src);
   replace->get_value(&rpl);
@@ -1865,7 +1837,7 @@ String *Item_func_regexp_replace::val_str(String *str)
 
 err:
   null_value= true;
-  return (String *) 0;
+  return nullptr;
 }
 
 
@@ -1991,8 +1963,12 @@ bool Item_func_insert::fix_length_and_dec(THD *thd)
   // Handle character set for args[0] and args[3].
   if (agg_arg_charsets_for_string_result(collation, args, 2, 3))
     return TRUE;
-  char_length= ((ulonglong) args[0]->max_char_length() +
-                (ulonglong) args[3]->max_char_length());
+  if (collation.collation == &my_charset_bin)
+    char_length= (ulonglong) args[0]->max_length +
+                 (ulonglong) args[3]->max_length;
+  else
+    char_length= ((ulonglong) args[0]->max_char_length() +
+                  (ulonglong) args[3]->max_char_length());
   fix_char_length_ulonglong(char_length);
   return FALSE;
 }
@@ -2001,13 +1977,21 @@ bool Item_func_insert::fix_length_and_dec(THD *thd)
 String *Item_str_conv::val_str(String *str)
 {
   DBUG_ASSERT(fixed());
-  String *res;
-  size_t alloced_length, len;
+  String *res= args[0]->val_str(&tmp_value);
 
-  if ((null_value= (!(res= args[0]->val_str(&tmp_value)) ||
-                    str->alloc((alloced_length= res->length() * multiply)))))
-    return 0;
+  if (!res)
+  {
+  err:
+    null_value= true;
+    return nullptr;
+  }
 
+  size_t alloced_length= res->length() * multiply, len;
+
+  if (str->alloc((alloced_length)))
+    goto err;
+
+  null_value= false;
   len= converter(collation.collation, (char*) res->ptr(), res->length(),
                                       (char*) str->ptr(), alloced_length);
   DBUG_ASSERT(len <= alloced_length);
@@ -2081,7 +2065,8 @@ void Item_str_func::left_right_max_length()
   uint32 char_length= args[0]->max_char_length();
   if (args[1]->can_eval_in_optimize())
   {
-    uint32 length= max_length_for_string(args[1]);
+    bool neg;
+    uint32 length= max_length_for_string(args[1], &neg);
     set_if_smaller(char_length, length);
   }
   fix_char_length(char_length);
@@ -2200,11 +2185,11 @@ bool Item_func_substr::fix_length_and_dec(THD *thd)
   }
   if (arg_count == 3 && args[2]->const_item())
   {
-    int32 length= (int32) args[2]->val_int();
-    if (args[2]->null_value || length <= 0)
+    longlong length= args[2]->val_int();
+    if (args[2]->null_value || (length <= 0 && !args[2]->unsigned_flag))
       max_length=0; /* purecov: inspected */
-    else
-      set_if_smaller(max_length,(uint) length);
+    else if (length < UINT32_MAX)
+      set_if_smaller(max_length, (uint32) length);
   }
   max_length*= collation.collation->mbmaxlen;
   return FALSE;
@@ -2580,13 +2565,31 @@ bool Item_func_trim::fix_length_and_dec(THD *thd)
 
 void Item_func_trim::print(String *str, enum_query_type query_type)
 {
+  LEX_CSTRING suffix= {STRING_WITH_LEN("_oracle")};
   if (arg_count == 1)
   {
-    Item_func::print(str, query_type);
+    if (query_type & QT_FOR_FRM)
+    {
+      // 10.3 downgrade compatibility for FRM
+      str->append(func_name_cstring());
+      if (schema() == &oracle_schema_ref)
+        str->append(suffix);
+    }
+    else
+      print_sql_mode_qualified_name(str, query_type, func_name_cstring());
+    print_args_parenthesized(str, query_type);
     return;
   }
-  str->append(Item_func_trim::func_name_cstring());
-  str->append(func_name_ext());
+
+  if (query_type & QT_FOR_FRM)
+  {
+    // 10.3 downgrade compatibility for FRM
+    str->append(Item_func_trim::func_name_cstring());
+    if (schema() == &oracle_schema_ref)
+      str->append(suffix);
+  }
+  else
+    print_sql_mode_qualified_name(str, query_type, Item_func_trim::func_name_cstring());
   str->append('(');
   str->append(mode_name());
   str->append(' ');
@@ -2650,7 +2653,7 @@ String *Item_func_password::val_str_ascii(String *str)
     if (args[0]->null_value || res->length() == 0)
       return make_empty_result(str);
     my_make_scrambled_password(tmp_value, res->ptr(), res->length());
-    str->set(tmp_value, SCRAMBLED_PASSWORD_CHAR_LENGTH, &my_charset_latin1);
+    str->copy(tmp_value, SCRAMBLED_PASSWORD_CHAR_LENGTH, &my_charset_latin1);
     break;
   case OLD:
     if ((null_value=args[0]->null_value))
@@ -2658,7 +2661,7 @@ String *Item_func_password::val_str_ascii(String *str)
     if (res->length() == 0)
       return make_empty_result(str);
     my_make_scrambled_password_323(tmp_value, res->ptr(), res->length());
-    str->set(tmp_value, SCRAMBLED_PASSWORD_CHAR_LENGTH_323, &my_charset_latin1);
+    str->copy(tmp_value, SCRAMBLED_PASSWORD_CHAR_LENGTH_323, &my_charset_latin1);
     break;
   default:
     DBUG_ASSERT(0);
@@ -2669,9 +2672,8 @@ String *Item_func_password::val_str_ascii(String *str)
 char *Item_func_password::alloc(THD *thd, const char *password,
                                 size_t pass_len, enum PW_Alg al)
 {
-  char *buff= (char *) thd->alloc((al==NEW)?
-                                  SCRAMBLED_PASSWORD_CHAR_LENGTH + 1:
-                                  SCRAMBLED_PASSWORD_CHAR_LENGTH_323 + 1);
+  char *buff= thd->alloc(al==NEW ? SCRAMBLED_PASSWORD_CHAR_LENGTH + 1
+                                 : SCRAMBLED_PASSWORD_CHAR_LENGTH_323 + 1);
   if (!buff)
     return NULL;
 
@@ -2811,7 +2813,7 @@ String *Item_func_database::val_str(String *str)
     return 0;
   }
   else
-    str->copy(thd->db.str, thd->db.length, system_charset_info);
+    str->copy(thd->db.str, thd->db.length, collation.collation);
   null_value= 0;
   return str;
 }
@@ -2827,11 +2829,11 @@ String *Item_func_sqlerrm::val_str(String *str)
   if ((err= it++))
   {
     str->copy(err->get_message_text(), err->get_message_octet_length(),
-              system_charset_info);
+              collation.collation);
     return str;
   }
   str->copy(STRING_WITH_LEN("normal, successful completion"),
-            system_charset_info);
+            collation.collation);
   return str;
 }
 
@@ -2906,6 +2908,17 @@ bool Item_func_current_user::fix_fields(THD *thd, Item **ref)
   return init(ctx->priv_user, ctx->priv_host);
 }
 
+bool Item_func_session_user::fix_fields(THD *thd, Item **ref)
+{
+  if (thd->variables.old_behavior & OLD_MODE_SESSION_USER_IS_USER)
+    return Item_func_user::fix_fields(thd, ref);
+
+  if (Item_func_sysconst::fix_fields(thd, ref))
+    return TRUE;
+
+  return init(thd->main_security_ctx.priv_user, thd->main_security_ctx.priv_host);
+}
+
 bool Item_func_current_role::fix_fields(THD *thd, Item **ref)
 {
   if (Item_func_sysconst::fix_fields(thd, ref))
@@ -2916,7 +2929,7 @@ bool Item_func_current_role::fix_fields(THD *thd, Item **ref)
   if (ctx->priv_role[0])
   {
     if (str_value.copy(ctx->priv_role, strlen(ctx->priv_role),
-                       system_charset_info))
+                       collation.collation))
       return 1;
     str_value.mark_as_const();
     null_value= 0;
@@ -3477,7 +3490,8 @@ bool Item_func_repeat::fix_length_and_dec(THD *thd)
   DBUG_ASSERT(collation.collation != NULL);
   if (args[1]->can_eval_in_optimize())
   {
-    uint32 length= max_length_for_string(args[1]);
+    bool neg;
+    uint32 length= max_length_for_string(args[1], &neg);
     ulonglong char_length= (ulonglong) args[0]->max_char_length() * length;
     fix_char_length_ulonglong(char_length);
     return false;
@@ -3551,7 +3565,8 @@ bool Item_func_space::fix_length_and_dec(THD *thd)
   collation.set(default_charset(), DERIVATION_COERCIBLE, MY_REPERTOIRE_ASCII);
   if (args[0]->can_eval_in_optimize())
   {
-    fix_char_length_ulonglong(max_length_for_string(args[0]));
+    bool neg;
+    fix_char_length_ulonglong(max_length_for_string(args[0], &neg));
     return false;
   }
   max_length= MAX_BLOB_WIDTH;
@@ -3608,7 +3623,7 @@ err:
 
 bool Item_func_binlog_gtid_pos::fix_length_and_dec(THD *thd)
 {
-  collation.set(system_charset_info);
+  collation.set(system_charset_info_for_i_s);
   max_length= MAX_BLOB_WIDTH;
   set_maybe_null();
   return FALSE;
@@ -3620,19 +3635,19 @@ String *Item_func_binlog_gtid_pos::val_str(String *str)
   DBUG_ASSERT(fixed());
 #ifndef HAVE_REPLICATION
   null_value= 0;
-  str->copy("", 0, system_charset_info);
+  str->copy("", 0, system_charset_info_for_i_s);
   return str;
 #else
   String name_str, *name;
   longlong pos;
 
-  if (args[0]->null_value || args[1]->null_value)
-    goto err;
-
   name= args[0]->val_str(&name_str);
   pos= args[1]->val_int();
 
-  if (pos < 0 || pos > UINT_MAX32)
+  if (args[0]->null_value || args[1]->null_value)
+    goto err;
+
+  if (pos < 0 || (ulonglong) pos > UINT_MAX32)
     goto err;
 
   if (gtid_state_from_binlog_pos(name->c_ptr_safe(), (uint32)pos, str))
@@ -3677,7 +3692,10 @@ bool Item_func_pad::fix_length_and_dec(THD *thd)
   DBUG_ASSERT(collation.collation->mbmaxlen > 0);
   if (args[1]->can_eval_in_optimize())
   {
-    fix_char_length_ulonglong(max_length_for_string(args[1]));
+    bool neg;
+    fix_char_length_ulonglong(max_length_for_string(args[1], &neg));
+    if (neg)
+      set_maybe_null();
     return false;
   }
   max_length= MAX_BLOB_WIDTH;
@@ -3689,7 +3707,7 @@ bool Item_func_pad::fix_length_and_dec(THD *thd)
 /*
   PAD(expr,length,' ')
   removes argument's soft dependency on PAD_CHAR_TO_FULL_LENGTH if the result
-  is longer than the argument's maximim possible length.
+  is longer than the argument's maximum possible length.
 */
 Sql_mode_dependency Item_func_rpad::value_depends_on_sql_mode() const
 {
@@ -3909,7 +3927,7 @@ String *Item_func_conv::val_str(String *str)
 {
   DBUG_ASSERT(fixed());
   String *res= args[0]->val_str(str);
-  char *endptr,ans[65],*ptr;
+  char *endptr,ans[66],*ptr;
   longlong dec;
   int from_base= (int) args[1]->val_int();
   int to_base= (int) args[2]->val_int();
@@ -3918,8 +3936,8 @@ String *Item_func_conv::val_str(String *str)
   // Note that abs(INT_MIN) is undefined.
   if (args[0]->null_value || args[1]->null_value || args[2]->null_value ||
       from_base == INT_MIN || to_base == INT_MIN ||
-      abs(to_base) > 36 || abs(to_base) < 2 ||
-      abs(from_base) > 36 || abs(from_base) < 2 || !(res->length()))
+      abs(to_base) > 62 || abs(to_base) < 2 ||
+      abs(from_base) > 62 || abs(from_base) < 2 || !(res->length()))
   {
     null_value= 1;
     return NULL;
@@ -3997,7 +4015,9 @@ String *Item_func_conv_charset::val_str(String *str)
 
 bool Item_func_conv_charset::fix_length_and_dec(THD *thd)
 {
-  DBUG_ASSERT(collation.derivation == DERIVATION_IMPLICIT);
+  DBUG_ASSERT(collation.derivation == DERIVATION_CAST ||
+              (collation.derivation == DERIVATION_IMPLICIT &&
+               collation.collation == &my_charset_bin));
   fix_char_length(args[0]->max_char_length());
   return FALSE;
 }
@@ -4017,22 +4037,45 @@ String *Item_func_set_collation::val_str(String *str)
   str=args[0]->val_str(str);
   if ((null_value=args[0]->null_value))
     return 0;
+  /*
+    Let SCS be the character set of the source - args[0].
+    Let TCS be the character set of the target - i.e. the character set
+    of the collation specified in the COLLATE clause.
+
+    It's OK to return SQL NULL if SCS is not equal to TCS.
+    This is possible on the explicit NULL or expressions derived from
+    the explicit NULL:
+      SELECT NULL COLLATE utf8mb4_general_ci;
+      SELECT COALESCE(NULL) COLLATE utf8mb4_general_ci;
+
+    But for a non-NULL result SCS and TCS must be compatible:
+    1. Either SCS==TCS
+    2. Or SCS can be reinterpreted to TCS.
+       This scenario is possible when args[0] is numeric and TCS->mbmaxlen==1.
+
+    If SCS and TCS are not compatible here, then something went wrong during
+    fix_fields(), e.g. an Item_func_conv_charset was not added two wrap args[0].
+  */
+  DBUG_ASSERT(my_charset_same(args[0]->collation.collation,
+                              collation.collation) ||
+              (args[0]->collation.repertoire == MY_REPERTOIRE_ASCII &&
+               !(collation.collation->state & MY_CS_NONASCII)));
   str->set_charset(collation.collation);
   return str;
 }
 
 bool Item_func_set_collation::fix_length_and_dec(THD *thd)
 {
-  if (agg_arg_charsets_for_string_result(collation, args, 1))
+  if (agg_arg_charsets_for_string_result(collation, args, 1) ||
+      collation.merge_collation(thd, thd->variables.character_set_collations,
+                                m_set_collation,
+                                args[0]->collation.repertoire,
+                                with_param() &&
+                                thd->lex->is_ps_or_view_context_analysis()))
     return true;
-  Lex_exact_charset_opt_extended_collate cl(collation.collation, true);
-  if (cl.merge_collation_override(thd,
-                                  thd->variables.character_set_collations,
-                                  m_set_collation))
-    return true;
-  collation.set(cl.collation().charset_info(), DERIVATION_EXPLICIT,
-                args[0]->collation.repertoire);
-  max_length= args[0]->max_length;
+  ulonglong max_char_length= (ulonglong) args[0]->max_char_length();
+  fix_char_length_ulonglong(max_char_length);
+
   return FALSE;
 }
 
@@ -4056,9 +4099,8 @@ String *Item_func_charset::val_str(String *str)
   DBUG_ASSERT(fixed());
   uint dummy_errors;
 
-  CHARSET_INFO *cs= args[0]->charset_for_protocol(); 
   null_value= 0;
-  str->copy(cs->cs_name.str, cs->cs_name.length,
+  str->copy(m_cached_charset_info.str, m_cached_charset_info.length,
 	    &my_charset_latin1, collation.collation, &dummy_errors);
   return str;
 }
@@ -4165,7 +4207,7 @@ String *Item_func_weight_string::val_str(String *str)
   frm_length= cs->strnxfrm((char*) str->ptr(), tmp_length,
                            nweights ? nweights : (uint) tmp_length,
                            res->ptr(), res->length(),
-                           weigth_flags);
+                           weigth_flags).m_result_length;
   DBUG_ASSERT(frm_length <= tmp_length);
 
   str->set_charset(&my_charset_bin);
@@ -4202,9 +4244,11 @@ String *Item_func_hex::val_str_ascii_from_val_real(String *str)
     return 0;
   if ((val <= (double) LONGLONG_MIN) ||
       (val >= (double) (ulonglong) ULONGLONG_MAX))
-    dec= ~(longlong) 0;
+    dec= ULONGLONG_MAX;
+  else if (val < 0)
+    dec= (ulonglong) (longlong) (val - 0.5);
   else
-    dec= (ulonglong) (val + (val > 0 ? 0.5 : -0.5));
+    dec= (ulonglong) (val + 0.5);
   return str->set_hex(dec) ? make_empty_result(str) : str;
 }
 
@@ -4664,9 +4708,9 @@ longlong Item_func_uncompressed_length::val_int()
   if (res->length() <= 4)
   {
     THD *thd= current_thd;
-    push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
-                        ER_ZLIB_Z_DATA_ERROR,
-                        ER_THD(thd, ER_ZLIB_Z_DATA_ERROR));
+    push_warning(thd, Sql_condition::WARN_LEVEL_WARN,
+                 ER_ZLIB_Z_DATA_ERROR,
+                 ER_THD(thd, ER_ZLIB_Z_DATA_ERROR));
     null_value= 1;
     return 0;
   }
@@ -4676,7 +4720,7 @@ longlong Item_func_uncompressed_length::val_int()
     5 bytes long.
     res->c_ptr() is not used because:
       - we do not need \0 terminated string to get first 4 bytes
-      - c_ptr() tests simbol after string end (uninitialized memory) which
+      - c_ptr() tests symbol after string end (uninitialized memory) which
         confuse valgrind
   */
   return uint4korr(res->ptr()) & 0x3FFFFFFF;
@@ -4801,7 +4845,7 @@ String *Item_func_uncompress::val_str(String *str)
   if (res->length() <= 4)
   {
     THD *thd= current_thd;
-    push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
+    push_warning(thd, Sql_condition::WARN_LEVEL_WARN,
 			ER_ZLIB_Z_DATA_ERROR,
 			ER_THD(thd, ER_ZLIB_Z_DATA_ERROR));
     goto err;
@@ -4947,7 +4991,7 @@ bool Item_func_dyncol_create::prepare_arguments(THD *thd, bool force_names_arg)
         {
           uint strlen= res->length() * DYNCOL_UTF->mbmaxlen + 1;
           uint dummy_errors;
-          if (char *str= (char *) thd->alloc(strlen))
+          if (char *str= thd->alloc(strlen))
           {
             keys_str[i].length=
               copy_and_convert(str, strlen, DYNCOL_UTF,
@@ -5116,6 +5160,11 @@ void Item_func_dyncol_create::print_arguments(String *str,
       {
         str->append(STRING_WITH_LEN(" charset "));
         str->append(defs[i].cs->cs_name);
+        if (Charset(defs[i].cs).can_have_collate_clause())
+        {
+          str->append(STRING_WITH_LEN(" collate "));
+          str->append(defs[i].cs->coll_name);
+        }
         str->append(' ');
       }
       break;
@@ -5282,7 +5331,7 @@ bool Item_dyncol_get::get_dyn_value(THD *thd, DYNAMIC_COLUMN_VALUE *val,
     {
       uint strlen= nm->length() * DYNCOL_UTF->mbmaxlen + 1;
       uint dummy_errors;
-      buf.str= (char *) thd->alloc(strlen);
+      buf.str= thd->alloc(strlen);
       if (buf.str)
       {
         buf.length=
@@ -5893,7 +5942,7 @@ static NATSORT_ERR to_natsort_key(const String *in, String *out,
 {
   size_t n_digits= 0;
   size_t n_lead_zeros= 0;
-  size_t num_start;
+  size_t num_start= 0;
   size_t reserve_length= std::min(
       natsort_max_key_size(in->length()) + MAX_BIGINT_WIDTH + 2, max_key_size);
 
@@ -6024,6 +6073,7 @@ bool Item_func_natural_sort_key::check_vcol_func_processor(void *arg)
                                    VCOL_NON_DETERMINISTIC);
 }
 
+
 String *Item_func_format_pico_time::val_str_ascii(String *)
 {
   double time_val= args[0]->val_real();
@@ -6102,6 +6152,81 @@ String *Item_func_format_pico_time::val_str_ascii(String *)
   return &m_value;
 }
 
+
+String *Item_func_format_bytes::val_str_ascii(String *)
+{
+  double bytes= args[0]->val_real();
+
+  null_value = args[0]->null_value;
+  if (null_value)
+    return 0;
+
+  /*
+    snprintf below uses %4.2f, so 1023.99 MiB should be shown as 1.00 GiB
+  */
+  double bytes_abs= fabs(bytes)/1023.995*1024;
+
+  constexpr uint64_t kib{1024};
+  constexpr uint64_t mib{1024 * kib};
+  constexpr uint64_t gib{1024 * mib};
+  constexpr uint64_t tib{1024 * gib};
+  constexpr uint64_t pib{1024 * tib};
+  constexpr uint64_t eib{1024 * pib};
+
+  uint64_t divisor;
+  size_t len;
+  const char *unit;
+
+  if (bytes_abs >= eib)
+  {
+    divisor= eib;
+    unit= "EiB";
+  }
+  else if (bytes_abs >= pib)
+  {
+    divisor= pib;
+    unit= "PiB";
+  }
+  else if (bytes_abs >= tib)
+  {
+    divisor= tib;
+    unit= "TiB";
+  }
+  else if (bytes_abs >= gib)
+  {
+    divisor= gib;
+    unit= "GiB";
+  }
+  else if (bytes_abs >= mib)
+  {
+    divisor= mib;
+    unit= "MiB";
+  }
+  else if (bytes_abs >= kib)
+  {
+    divisor= kib;
+    unit= "KiB";
+  }
+  else
+  {
+    divisor= 1;
+    unit= "bytes";
+  }
+
+  if (divisor == 1)
+    len= snprintf(m_value_buffer, sizeof(m_value_buffer), "%4d %s", (int)bytes, unit);
+  else
+  {
+    double value= bytes / divisor;
+    if (fabs(value) >= 100000.0)
+      len= snprintf(m_value_buffer, sizeof(m_value_buffer), "%4.2e %s", value, unit);
+    else
+      len= snprintf(m_value_buffer, sizeof(m_value_buffer), "%4.2f %s", value, unit);
+  }
+  m_value.length(len);
+  return &m_value;
+}
+
 #ifdef WITH_WSREP
 #include "wsrep_mysqld.h"
 #include "wsrep_server_state.h"
@@ -6112,7 +6237,7 @@ String *Item_func_wsrep_last_written_gtid::val_str_ascii(String *str)
 {
   if (gtid_str.alloc(WSREP_MAX_WSREP_SERVER_GTID_STR_LEN+1))
   {
-    my_error(ER_OUTOFMEMORY, WSREP_MAX_WSREP_SERVER_GTID_STR_LEN);
+    my_error(ER_OUTOFMEMORY, MYF(0), WSREP_MAX_WSREP_SERVER_GTID_STR_LEN);
     null_value= TRUE;
     return 0;
   }
@@ -6137,7 +6262,7 @@ String *Item_func_wsrep_last_seen_gtid::val_str_ascii(String *str)
 {
   if (gtid_str.alloc(WSREP_MAX_WSREP_SERVER_GTID_STR_LEN+1))
   {
-    my_error(ER_OUTOFMEMORY, WSREP_MAX_WSREP_SERVER_GTID_STR_LEN);
+    my_error(ER_OUTOFMEMORY, MYF(0), WSREP_MAX_WSREP_SERVER_GTID_STR_LEN);
     null_value= TRUE;
     return 0;
   }
@@ -6182,7 +6307,7 @@ longlong Item_func_wsrep_sync_wait_upto::val_int()
   if (!(gtid_list= gtid_parse_string_to_list(gtid_str->ptr(), gtid_str->length(),
                                              &count)))
   {
-    my_error(ER_INCORRECT_GTID_STATE, MYF(0), func_name());
+    my_error(ER_INCORRECT_GTID_STATE, MYF(0));
     null_value= TRUE;
     return 0;
   }
@@ -6194,12 +6319,12 @@ longlong Item_func_wsrep_sync_wait_upto::val_int()
       wait_gtid_ret= wsrep_gtid_server.wait_gtid_upto(gtid_list[0].seq_no, timeout);
       if ((wait_gtid_ret == ETIMEDOUT) || (wait_gtid_ret == ETIME))
       {
-        my_error(ER_LOCK_WAIT_TIMEOUT, MYF(0), func_name());
+        my_error(ER_LOCK_WAIT_TIMEOUT, MYF(0));
         ret= 0;
       }
       else if (wait_gtid_ret == ENOMEM)
       {
-        my_error(ER_OUTOFMEMORY, MYF(0), func_name());
+        my_error(ER_OUTOFMEMORY, MYF(0), sizeof(std::pair<uint64, mysql_cond_t*>));
         ret= 0;
       }
     }

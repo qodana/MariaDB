@@ -26,14 +26,18 @@
 #include "keycaches.h"
 #include "my_json_writer.h"
 #include <hash.h>
-#include <thr_alarm.h>
 #include "sql_connect.h"
 #include "thread_cache.h"
-#if defined(HAVE_MALLINFO) && defined(HAVE_MALLOC_H)
+
+#if defined(HAVE_MALLOC_H)
 #include <malloc.h>
-#elif defined(HAVE_MALLINFO) && defined(HAVE_SYS_MALLOC_H)
+#endif
+
+#if defined(HAVE_SYS_MALLOC_H)
 #include <sys/malloc.h>
-#elif defined(HAVE_MALLOC_ZONE)
+#endif
+
+#if defined(HAVE_MALLOC_ZONE)
 #include <malloc/malloc.h>
 #endif
 
@@ -84,9 +88,9 @@ print_where(COND *cond,const char *info, enum_query_type query_type)
 
 #ifdef EXTRA_DEBUG
 	/* This is for debugging purposes */
-static my_bool print_cached_tables_callback(TDC_element *element,
-                                            void *arg __attribute__((unused)))
+static my_bool print_cached_tables_callback(void *el, void*)
 {
+  TDC_element *element= static_cast<TDC_element*>(el);
   TABLE *entry;
 
   mysql_mutex_lock(&element->LOCK_table_share);
@@ -113,7 +117,7 @@ static void print_cached_tables(void)
   /* purecov: begin tested */
   puts("DB             Table                            Version  Thread  Open  Lock");
 
-  tdc_iterate(0, (my_hash_walk_action) print_cached_tables_callback, NULL, true);
+  tdc_iterate(0, print_cached_tables_callback, NULL, true);
 
   fflush(stdout);
   /* purecov: end */
@@ -611,17 +615,6 @@ Open streams:  %10lu\n",
 	 my_file_opened,
 	 my_stream_opened);
 
-#ifndef DONT_USE_THR_ALARM
-  ALARM_INFO alarm_info;
-  thr_alarm_info(&alarm_info);
-  printf("\nAlarm status:\n\
-Active alarms:   %u\n\
-Max used alarms: %u\n\
-Next alarm time: %lu\n",
-	 alarm_info.active_alarms,
-	 alarm_info.max_used_alarms,
-	(ulong)alarm_info.next_alarm_time);
-#endif
   display_table_locks();
 #if defined(HAVE_MALLINFO2)
   struct mallinfo2 info = mallinfo2();

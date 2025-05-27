@@ -731,7 +731,7 @@ void mi_update_status(void *param);
 void mi_restore_status(void *param);
 void mi_copy_status(void *to, void *from);
 my_bool mi_check_status(void *param);
-void mi_fix_status(MI_INFO *org_table, MI_INFO *new_table);
+void mi_fix_status(void *org_table, void *new_table);
 extern MI_INFO *test_if_reopen(char *filename);
 my_bool check_table_is_closed(const char *name, const char *where);
 int mi_open_datafile(MI_INFO *info, MYISAM_SHARE *share);
@@ -754,9 +754,12 @@ static inline check_result_t mi_check_index_tuple(MI_INFO *info, uint keynr,
 
     /* Functions needed by mi_check */
 int killed_ptr(HA_CHECK *param);
-void mi_check_print_error(HA_CHECK *param, const char *fmt, ...);
-void mi_check_print_warning(HA_CHECK *param, const char *fmt, ...);
-void mi_check_print_info(HA_CHECK *param, const char *fmt, ...);
+void mi_check_print_error(HA_CHECK *param, const char *fmt, ...)
+  ATTRIBUTE_FORMAT(printf, 2, 3);
+void mi_check_print_warning(HA_CHECK *param, const char *fmt, ...)
+  ATTRIBUTE_FORMAT(printf, 2, 3);
+void mi_check_print_info(HA_CHECK *param, const char *fmt, ...)
+  ATTRIBUTE_FORMAT(printf, 2, 3);
 pthread_handler_t thr_find_all_keys(void *arg);
 extern void mi_set_index_cond_func(MI_INFO *info, index_cond_func_t check_func,
                                    void *func_arg);

@@ -1,4 +1,4 @@
-/* Copyright (C) 2013-2022 Codership Oy <info@codership.com>
+/* Copyright (C) 2013-2023 Codership Oy <info@codership.com>
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -37,6 +37,7 @@ class THD;
 
 int wsrep_init_vars();
 void wsrep_set_wsrep_on(THD *thd);
+void wsrep_free_status_vars();
 bool wsrep_refresh_provider_options();
 
 #define CHECK_ARGS   (sys_var *self, THD* thd, set_var *var)
@@ -108,6 +109,7 @@ extern bool wsrep_gtid_seq_no_check          CHECK_ARGS;
 extern bool wsrep_gtid_domain_id_update      UPDATE_ARGS;
 
 extern bool wsrep_mode_check                 CHECK_ARGS;
+extern bool wsrep_forced_binlog_format_check CHECK_ARGS;
 #else  /* WITH_WSREP */
 
 #define wsrep_provider_init(X)

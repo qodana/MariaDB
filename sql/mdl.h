@@ -110,7 +110,8 @@ public:
      @see THD::notify_shared_lock()
    */
   virtual bool notify_shared_lock(MDL_context_owner *in_use,
-                                  bool needs_thr_lock_abort) = 0;
+                                  bool needs_thr_lock_abort,
+                                  bool needs_non_slave_abort) = 0;
 };
 
 /**
@@ -310,7 +311,7 @@ enum enum_mdl_type {
   Statement is modifying data, but will not block MDL_BACKUP_DDL or earlier
   BACKUP stages.
   ALTER TABLE is started with MDL_BACKUP_DDL, but changed to
-  MDL_BACKUP_ALTER_COPY while alter table is copying or modifing data.
+  MDL_BACKUP_ALTER_COPY while alter table is copying or modifying data.
 */
 
 #define MDL_BACKUP_ALTER_COPY enum_mdl_type(12)
@@ -701,7 +702,17 @@ public:
   */
   MDL_ticket *next_in_context;
   MDL_ticket **prev_in_context;
+
+#ifndef DBUG_OFF
+  /**
+    Duration of lock represented by this ticket.
+    Context public. Debug-only.
+  */
 public:
+  enum_mdl_duration m_duration;
+#endif
+  ulonglong m_time;
+
 #ifdef WITH_WSREP
   void wsrep_report(bool debug) const;
 #endif /* WITH_WSREP */
@@ -728,8 +739,8 @@ public:
   bool is_incompatible_when_waiting(enum_mdl_type type) const;
 
   /** Implement MDL_wait_for_subgraph interface. */
-  virtual bool accept_visitor(MDL_wait_for_graph_visitor *dvisitor);
-  virtual uint get_deadlock_weight() const;
+  bool accept_visitor(MDL_wait_for_graph_visitor *dvisitor) override;
+  uint get_deadlock_weight() const override;
   /**
     Status of lock request represented by the ticket as reflected in P_S.
   */
@@ -743,10 +754,12 @@ private:
              , enum_mdl_duration duration_arg
 #endif
             )
-   : m_type(type_arg),
+   :
 #ifndef DBUG_OFF
      m_duration(duration_arg),
 #endif
+     m_time(0),
+     m_type(type_arg),
      m_ctx(ctx_arg),
      m_lock(NULL),
      m_psi(NULL)
@@ -766,13 +779,7 @@ private:
 private:
   /** Type of metadata lock. Externally accessible. */
   enum enum_mdl_type m_type;
-#ifndef DBUG_OFF
-  /**
-    Duration of lock represented by this ticket.
-    Context private. Debug-only.
-  */
-  enum_mdl_duration m_duration;
-#endif
+
   /**
     Context of the owner of the metadata lock ticket. Externally accessible.
   */
@@ -945,7 +952,8 @@ public:
                     already has received some signal or closed
                     signal slot.
   */
-  void init(MDL_context_owner *arg) { m_owner= arg; }
+  void init(MDL_context_owner *arg) { m_owner= arg; reset(); }
+  void reset() { m_deadlock_overweight= 0; }
 
   void set_needs_thr_lock_abort(bool needs_thr_lock_abort)
   {
@@ -1054,7 +1062,7 @@ private:
    */
   MDL_wait_for_subgraph *m_waiting_for;
   LF_PINS *m_pins;
-  uint m_deadlock_overweight= 0;
+  uint m_deadlock_overweight;
 private:
   MDL_ticket *find_ticket(MDL_request *mdl_req,
                           enum_mdl_duration *duration);
@@ -1102,6 +1110,26 @@ private:
 
   /* metadata_lock_info plugin */
   friend int i_s_metadata_lock_info_fill_row(MDL_ticket*, void*);
+#ifndef DBUG_OFF
+public:
+  /**
+    This is for the case when the thread opening the table does not acquire
+    the lock itself, but utilizes a lock guarantee from another MDL context.
+
+    For example, in InnoDB, MDL is acquired by the purge_coordinator_task,
+    but the table may be opened and used in a purge_worker_task.
+    The coordinator thread holds the lock for the duration of worker's purge
+    job, or longer, possibly reusing shared MDL for different workers and jobs.
+  */
+  MDL_context *lock_warrant= NULL;
+
+  inline bool is_lock_warrantee(MDL_key::enum_mdl_namespace ns,
+                                const char *db, const char *name,
+                                enum_mdl_type mdl_type) const
+  {
+    return lock_warrant && lock_warrant->is_lock_owner(ns, db, name, mdl_type);
+  }
+#endif
 };
 
 

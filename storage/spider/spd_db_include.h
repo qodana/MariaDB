@@ -86,7 +86,6 @@ typedef st_spider_result SPIDER_RESULT;
 #define SPIDER_SQL_HS_LTEQUAL_STR "<="
 #define SPIDER_SQL_HS_LTEQUAL_LEN (sizeof(SPIDER_SQL_HS_LTEQUAL_STR) - 1)
 
-#ifdef ITEM_FUNC_CASE_PARAMS_ARE_PUBLIC
 #define SPIDER_SQL_CASE_STR "case "
 #define SPIDER_SQL_CASE_LEN (sizeof(SPIDER_SQL_CASE_STR) - 1)
 #define SPIDER_SQL_WHEN_STR " when "
@@ -97,7 +96,6 @@ typedef st_spider_result SPIDER_RESULT;
 #define SPIDER_SQL_ELSE_LEN (sizeof(SPIDER_SQL_ELSE_STR) - 1)
 #define SPIDER_SQL_END_STR " end"
 #define SPIDER_SQL_END_LEN (sizeof(SPIDER_SQL_END_STR) - 1)
-#endif
 
 #define SPIDER_SQL_USING_STR " using "
 #define SPIDER_SQL_USING_LEN (sizeof(SPIDER_SQL_USING_STR) - 1)
@@ -125,8 +123,6 @@ typedef st_spider_result SPIDER_RESULT;
 #define SPIDER_SQL_LIKE_LEN (sizeof(SPIDER_SQL_LIKE_STR) - 1)
 #define SPIDER_SQL_NOT_LIKE_STR "not like"
 #define SPIDER_SQL_NOT_LIKE_LEN (sizeof(SPIDER_SQL_NOT_LIKE_STR) - 1)
-#define SPIDER_SQL_AS_CHAR_STR " as char"
-#define SPIDER_SQL_AS_CHAR_LEN (sizeof(SPIDER_SQL_AS_CHAR_STR) - 1)
 #define SPIDER_SQL_CAST_STR "cast("
 #define SPIDER_SQL_CAST_LEN (sizeof(SPIDER_SQL_CAST_STR) - 1)
 #define SPIDER_SQL_AS_DATETIME_STR " as datetime"
@@ -383,12 +379,6 @@ public:
     IO_CACHE *file,
     uint32 arg_length
   );
-  bool append_with_prefill(
-    const char *s,
-    uint32 arg_length,
-    uint32 full_length,
-    char fill_char
-  );
   int strstr(
     const String &search,
     uint32 offset = 0
@@ -548,34 +538,26 @@ typedef struct spider_conn_holder
   spider_conn_holder *next;
 } SPIDER_CONN_HOLDER;
 
+/* Record information of a local (spider) table, for use of the spider
+group by handler. */
 typedef struct spider_table_holder
 {
   TABLE *table;
   ha_spider *spider;
+  /* alias of the table, in the form of tk, where k is the index of
+  the table from `query->from' indexed by next_local. */
   spider_string *alias;
 } SPIDER_TABLE_HOLDER;
 
-typedef struct spider_field_holder
-{
-  Field *field;
-  ha_spider *spider;
-  spider_string *alias;
-  spider_field_holder *next;
-} SPIDER_FIELD_HOLDER;
-
-typedef struct spider_field_chain
-{
-  spider_field_holder *field_holder;
-  spider_field_chain *next;
-} SPIDER_FIELD_CHAIN;
-
+/* For use of the spider group by handler. */
 class spider_fields
 {
   uint dbton_count;
   uint current_dbton_num;
   uint dbton_ids[SPIDER_DBTON_SIZE];
+  /* Number of tables in `query->from'. */
   uint table_count;
-  uint current_table_num;
+  /* All tables in `query->from', in the same order by next_local. */
   SPIDER_TABLE_HOLDER *table_holder;
   SPIDER_LINK_IDX_CHAIN *first_link_idx_chain;
   SPIDER_LINK_IDX_CHAIN *last_link_idx_chain;
@@ -584,13 +566,6 @@ class spider_fields
   SPIDER_CONN_HOLDER *first_conn_holder;
   SPIDER_CONN_HOLDER *last_conn_holder;
   SPIDER_CONN_HOLDER *current_conn_holder;
-  SPIDER_FIELD_HOLDER *first_field_holder;
-  SPIDER_FIELD_HOLDER *last_field_holder;
-  SPIDER_FIELD_HOLDER *current_field_holder;
-  SPIDER_FIELD_CHAIN *first_field_chain;
-  SPIDER_FIELD_CHAIN *last_field_chain;
-  SPIDER_FIELD_CHAIN *current_field_chain;
-  Field **first_field_ptr;
   Field **current_field_ptr;
 public:
   spider_fields();
@@ -633,8 +608,6 @@ public:
     long access_balance
   );
   SPIDER_CONN_HOLDER *create_conn_holder();
-  void set_pos_to_first_conn_holder();
-  SPIDER_CONN_HOLDER *get_next_conn_holder();
   bool has_conn_holder();
   void clear_conn_holder_from_conn();
   bool check_conn_same_conn(
@@ -648,24 +621,14 @@ public:
   void free_conn_holder(
     SPIDER_CONN_HOLDER *conn_holder_arg
   );
-  SPIDER_TABLE_HOLDER *add_table(
-    ha_spider *spider_arg
-  );
-  bool all_query_fields_are_query_table_members();
-  int create_table_holder(
+  SPIDER_TABLE_HOLDER *find_table(Field *field);
+  void set_table_holder(
+    SPIDER_TABLE_HOLDER *table_holder_arg,
     uint table_count_arg
   );
-  void set_pos_to_first_table_holder();
-  SPIDER_TABLE_HOLDER *get_next_table_holder();
+  SPIDER_TABLE_HOLDER *get_first_table_holder();
   SPIDER_TABLE_HOLDER *get_table_holder(TABLE *table);
   uint get_table_count();
-  int add_field(Field *field_arg);
-  SPIDER_FIELD_HOLDER *create_field_holder();
-  void set_pos_to_first_field_holder();
-  SPIDER_FIELD_HOLDER *get_next_field_holder();
-  SPIDER_FIELD_CHAIN *create_field_chain();
-  void set_pos_to_first_field_chain();
-  SPIDER_FIELD_CHAIN *get_next_field_chain();
   void set_field_ptr(Field **field_arg);
   Field **get_next_field_ptr();
   int ping_table_mon_from_table(
@@ -805,11 +768,6 @@ public:
     TABLE_LIST *table_list,
     uint table_count
   ) = 0;
-  virtual int reappend_tables(
-    spider_fields *fields,
-    SPIDER_LINK_IDX_CHAIN *link_idx_chain,
-    spider_string *str
-  ) = 0;
   virtual int append_where(
     spider_string *str
   ) = 0;
@@ -833,6 +791,7 @@ public:
   SPIDER_DB_ROW *next_pos;
   spider_db_row(uint in_dbton_id) : dbton_id(in_dbton_id), next_pos(NULL) {}
   virtual ~spider_db_row() = default;
+  /* Store the current field result to a given field */
   virtual int store_to_field(
     Field *field,
     CHARSET_INFO *access_charset
@@ -845,6 +804,7 @@ public:
     uint dbton_id
   ) = 0;
   virtual void first() = 0;
+  /* Move to the next field result. */
   virtual void next() = 0;
   virtual bool is_null() = 0;
   virtual int val_int() = 0;
@@ -883,7 +843,7 @@ public:
   virtual bool has_result() = 0;
   virtual void free_result() = 0;
   virtual SPIDER_DB_ROW *current_row() = 0;
-  virtual SPIDER_DB_ROW *fetch_row() = 0;
+  virtual SPIDER_DB_ROW *fetch_row(MY_BITMAP *skips = NULL) = 0;
   virtual SPIDER_DB_ROW *fetch_row_from_result_buffer(
     spider_db_result_buffer *spider_res_buf
   ) = 0;
@@ -1064,10 +1024,6 @@ public:
     Time_zone *time_zone,
     int *need_mon
   ) = 0;
-  virtual bool set_loop_check_in_bulk_sql();
-  virtual int set_loop_check(
-    int *need_mon
-  );
   virtual int fin_loop_check();
   virtual int show_master_status(
     SPIDER_TRX *trx,
@@ -1153,10 +1109,11 @@ public:
   uint dbton_id;
   ha_spider *spider;
   spider_db_share *db_share;
+  /* Index of active server, used in query construction. */
   int first_link_idx;
   SPIDER_LINK_IDX_CHAIN *link_idx_chain;
-  bool strict_group_by;
-  bool no_where_cond;
+  bool strict_group_by= false;
+  bool no_where_cond= false;
   spider_db_handler(ha_spider *spider, spider_db_share *db_share) :
     dbton_id(db_share->dbton_id), spider(spider), db_share(db_share),
     first_link_idx(-1) {}
@@ -1427,9 +1384,6 @@ public:
   virtual int reset_sql(
     ulong sql_type
   ) = 0;
-  virtual bool need_lock_before_set_sql_for_exec(
-    ulong sql_type
-  ) = 0;
   virtual int set_sql_for_exec(
     ulong sql_type,
     int link_idx,
@@ -1541,10 +1495,6 @@ public:
     spider_fields *fields,
     ulong sql_type
   ) = 0;
-  virtual int reappend_tables_part(
-    spider_fields *fields,
-    ulong sql_type
-  ) = 0;
   virtual int append_where_part(
     ulong sql_type
   ) = 0;
@@ -1565,7 +1515,8 @@ public:
     uint alias_length,
     bool use_fields,
     spider_fields *fields,
-    ulong sql_type
+    ulong sql_type,
+    int n_aux=0
   ) = 0;
   virtual int append_group_by_part(
     ORDER *order,
@@ -1685,6 +1636,12 @@ static const LEX_CSTRING maturity_name[] =
   { STRING_WITH_LEN("Stable") }
 };
 
+/*
+  Type of singletons based on the type of the remote database.
+
+  All such singletons are stored in the array `spider_dbton', see
+  `spider_db_init()'.
+*/
 typedef struct st_spider_dbton
 {
   /** The index of this dbton in `spider_dbton` */
@@ -1816,7 +1773,7 @@ typedef struct st_spider_result_list
   longlong                second_read;
   int                     set_split_read_count;
   int                     *casual_read;
-  /* 0:nomal 1:store 2:store end */
+  /* 0:normal 1:store 2:store end */
   volatile
     int                   quick_phase;
   bool                    keyread;
@@ -1833,4 +1790,10 @@ typedef struct st_spider_result_list
   volatile
     SPIDER_RESULT         *bgs_current;
   SPIDER_DB_ROW           *tmp_pos_row_first;
+  /*
+    A bitmap marking fields to skip when storing results fetched from
+    the data node to a SPIDER_DB_ROW
+  */
+  MY_BITMAP               *skips;
+  int                     n_aux;
 } SPIDER_RESULT_LIST;

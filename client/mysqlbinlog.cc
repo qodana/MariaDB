@@ -1,6 +1,6 @@
 /*
    Copyright (c) 2000, 2014, Oracle and/or its affiliates.
-   Copyright (c) 2009, 2020, MariaDB
+   Copyright (c) 2009, 2024, MariaDB
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -116,9 +116,7 @@ static bool one_database=0, one_table=0, to_last_remote_log= 0, disable_log_bin=
 static bool opt_hexdump= 0, opt_version= 0;
 const char *base64_output_mode_names[]=
 {"NEVER", "AUTO", "UNSPEC", "DECODE-ROWS", NullS};
-TYPELIB base64_output_mode_typelib=
-  { array_elements(base64_output_mode_names) - 1, "",
-    base64_output_mode_names, NULL };
+TYPELIB base64_output_mode_typelib=CREATE_TYPELIB_FOR(base64_output_mode_names);
 static enum_base64_output_mode opt_base64_output_mode= BASE64_OUTPUT_UNSPEC;
 static char *opt_base64_output_mode_str= NullS;
 static char* database= 0;
@@ -134,13 +132,13 @@ static ulong opt_stop_never_slave_server_id= 0;
 static my_bool opt_verify_binlog_checksum= 1;
 static ulonglong offset = 0;
 static char* host = 0;
-static int port= 0;
+static int opt_mysql_port= 0;
 static uint my_end_arg;
 static const char* sock= 0;
 static char *opt_plugindir= 0, *opt_default_auth= 0;
 
 static char* user = 0;
-static char* pass = 0;
+static char* opt_password = 0;
 static char *charset= 0;
 
 static uint verbose= 0;
@@ -150,6 +148,7 @@ static char *ignore_server_ids_str, *do_server_ids_str;
 static char *start_pos_str, *stop_pos_str;
 static ulonglong start_position= BIN_LOG_HEADER_SIZE,
                  stop_position= (longlong)(~(my_off_t)0) ;
+static const longlong stop_position_default= (longlong)(~(my_off_t)0);
 #define start_position_mot ((my_off_t)start_position)
 #define stop_position_mot  ((my_off_t)stop_position)
 
@@ -160,7 +159,10 @@ static Domain_gtid_event_filter *domain_id_gtid_filter= NULL;
 static Server_gtid_event_filter *server_id_gtid_filter= NULL;
 
 static char *start_datetime_str, *stop_datetime_str;
-static my_time_t start_datetime= 0, stop_datetime= MY_TIME_T_MAX;
+static my_time_t start_datetime= 0, stop_datetime= 0;
+static my_time_t last_processed_datetime= MY_TIME_T_MAX;
+static bool stop_datetime_given= false;
+
 static ulonglong rec_count= 0;
 static MYSQL* mysql = NULL;
 static const char* dirname_for_local_load= 0;
@@ -629,7 +631,7 @@ print_use_stmt(PRINT_EVENT_INFO* pinfo, const Query_log_event *ev)
     return;
 
   // In case of rewrite rule print USE statement for db_to
-  my_fprintf(result_file, "use %`s%s\n", db_to, pinfo->delimiter);
+  my_fprintf(result_file, "use %sQ%s\n", db_to, pinfo->delimiter);
 
   // Copy the *original* db to pinfo to suppress emitting
   // of USE stmts by log_event print-functions.
@@ -866,6 +868,7 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
   DBUG_ENTER("process_event");
   Exit_status retval= OK_CONTINUE;
   IO_CACHE *const head= &print_event_info->head_cache;
+  my_time_t ev_when= ev->when;
 
   /*
     We use Gtid_list_log_event information to determine if there is missing
@@ -1028,7 +1031,7 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
       if (ev_type != ROTATE_EVENT && is_server_id_excluded(ev->server_id))
         goto end;
     }
-    if ((ev->when >= stop_datetime)
+    if ((stop_datetime_given && ev->when >= stop_datetime)
         || (pos >= stop_position_mot))
     {
       /* end the program */
@@ -1053,7 +1056,7 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
     case QUERY_COMPRESSED_EVENT:
     {
       Query_log_event *qe= (Query_log_event*)ev;
-      if (!qe->is_trans_keyword())
+      if (!qe->is_trans_keyword(print_event_info->is_xa_trans()))
       {
         if (shall_skip_database(qe->db))
           goto end;
@@ -1196,8 +1199,8 @@ Exit_status process_event(PRINT_EVENT_INFO *print_event_info, Log_event *ev,
           int  tmp_sql_offset;
 
           conn = mysql_init(NULL);
-          if (!mysql_real_connect(conn, host, user, pass,
-                map->get_db_name(), port, sock, 0))
+          if (!mysql_real_connect(conn, host, user, opt_password,
+                map->get_db_name(), opt_mysql_port, sock, 0))
           {
             fprintf(stderr, "%s\n", mysql_error(conn));
             exit(1);
@@ -1366,6 +1369,7 @@ err:
 end:
   rec_count++;
 end_skip_count:
+  last_processed_datetime= ev_when;
 
   DBUG_PRINT("info", ("end event processing"));
   /*
@@ -1441,7 +1445,7 @@ static struct my_option my_options[] =
     like this:
     SET @`a`:=_cp850 0x4DFC6C6C6572 COLLATE `cp850_general_ci`;
   */
-  {"character-sets-dir", OPT_CHARSETS_DIR,
+  {"character-sets-dir", 0,
    "Directory for character set files.", &charsets_dir,
    &charsets_dir, 0, GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
   {"database", 'd', "List entries for just this database (local log only).",
@@ -1451,13 +1455,13 @@ static struct my_option my_options[] =
   {"debug", '#', "Output debug log.", &current_dbug_option,
    &current_dbug_option, 0, GET_STR, OPT_ARG, 0, 0, 0, 0, 0, 0},
 #endif
-  {"debug-check", OPT_DEBUG_CHECK, "Check memory and open file usage at exit .",
+  {"debug-check", 0, "Check memory and open file usage at exit .",
    &debug_check_flag, &debug_check_flag, 0,
    GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
-  {"debug-info", OPT_DEBUG_INFO, "Print some debug info at exit.",
+  {"debug-info", 0, "Print some debug info at exit.",
    &debug_info_flag, &debug_info_flag,
    0, GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
-  {"default_auth", OPT_DEFAULT_AUTH,
+  {"default_auth", 0,
    "Default authentication client-side plugin to use.",
    &opt_default_auth, &opt_default_auth, 0,
    GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
@@ -1484,8 +1488,9 @@ static struct my_option my_options[] =
   {"hexdump", 'H', "Augment output with hexadecimal and ASCII event dump.",
    &opt_hexdump, &opt_hexdump, 0, GET_BOOL, NO_ARG,
    0, 0, 0, 0, 0, 0},
-  {"host", 'h', "Get the binlog from server.", &host, &host,
-   0, GET_STR_ALLOC, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
+  {"host", 'h', "Get the binlog from server. Defaults in the following order: "
+  "$MARIADB_HOST, and then localhost",
+   &host, &host, 0, GET_STR_ALLOC, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
   {"local-load", 'l', "Prepare local temporary files for LOAD DATA INFILE in the specified directory.",
    &dirname_for_local_load, &dirname_for_local_load, 0,
    GET_STR_ALLOC, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
@@ -1493,7 +1498,7 @@ static struct my_option my_options[] =
    0, GET_ULL, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
   {"password", 'p', "Password to connect to remote server.",
    0, 0, 0, GET_STR, OPT_ARG, 0, 0, 0, 0, 0, 0},
-  {"plugin_dir", OPT_PLUGIN_DIR, "Directory for client-side plugins.",
+  {"plugin_dir", 0, "Directory for client-side plugins.",
     &opt_plugindir, &opt_plugindir, 0,
    GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
   {"port", 'P', "Port number to use for connection or 0 for default to, in "
@@ -1502,7 +1507,7 @@ static struct my_option my_options[] =
    "/etc/services, "
 #endif
    "built-in default (" STRINGIFY_ARG(MYSQL_PORT) ").",
-   &port, &port, 0, GET_INT, REQUIRED_ARG,
+   &opt_mysql_port, &opt_mysql_port, 0, GET_INT, REQUIRED_ARG,
    0, 0, 0, 0, 0, 0},
   {"protocol", OPT_MYSQL_PROTOCOL,
    "The protocol to use for connection (tcp, socket, pipe).",
@@ -1519,14 +1524,14 @@ static struct my_option my_options[] =
    &result_file_name, &result_file_name, 0, GET_STR, REQUIRED_ARG,
    0, 0, 0, 0, 0, 0},
 #ifdef WHEN_FLASHBACK_REVIEW_READY
-  {"review", opt_flashback_review, "Print review sql in output file.",
+  {"review", 0, "Print review sql in output file.",
    &opt_flashback_review, &opt_flashback_review, 0, GET_BOOL, NO_ARG, 0, 0, 0, 0,
    0, 0},
-  {"review-dbname", opt_flashback_flashback_review_dbname,
+  {"review-dbname", 0,
    "Writing flashback original row data into this db",
    &flashback_review_dbname, &flashback_review_dbname,
    0, GET_STR_ALLOC, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
-  {"review-tablename", opt_flashback_flashback_review_tablename,
+  {"review-tablename", 0,
    "Writing flashback original row data into this table",
    &flashback_review_tablename, &flashback_review_tablename,
    0, GET_STR_ALLOC, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
@@ -1576,7 +1581,7 @@ static struct my_option my_options[] =
    "Alias for --do-server-ids.",
    &server_id_str, &server_id_str, 0, GET_STR_ALLOC,
    REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
-  {"set-charset", OPT_SET_CHARSET,
+  {"set-charset", 0,
    "Add 'SET NAMES character_set' to the output.", &charset,
    &charset, 0, GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
   {"short-form", 's', "Just show regular queries: no extra info, no "
@@ -1640,7 +1645,7 @@ static struct my_option my_options[] =
    "given sequence numbers are printed.",
    &stop_pos_str, &stop_pos_str, 0, GET_STR_ALLOC, REQUIRED_ARG, 0, 0, 0, 0,
    0, 0},
-  {"table", 'T', "List entries for just this table (local log only).",
+  {"table", 'T', "List entries for just this table (affects only row events).",
    &table, &table, 0, GET_STR_ALLOC, REQUIRED_ARG,
    0, 0, 0, 0, 0, 0},
   {"to-last-log", 't', "Requires -R. Will not stop at the end of the \
@@ -1659,7 +1664,7 @@ that may lead to an endless loop.",
    0, 0, 0, GET_NO_ARG, NO_ARG, 0, 0, 0, 0, 0, 0},
   {"version", 'V', "Print version and exit.", 0, 0, 0, GET_NO_ARG, NO_ARG, 0,
    0, 0, 0, 0, 0},
-  {"open_files_limit", OPT_OPEN_FILES_LIMIT,
+  {"open_files_limit", 0,
    "Used to reserve file descriptors for use by this program.",
    &open_files_limit, &open_files_limit, 0, GET_ULONG,
    REQUIRED_ARG, MY_NFILE, 8, OS_FILE_LIMIT, 0, 1, 0},
@@ -1685,12 +1690,12 @@ that may lead to an endless loop.",
    "Updates to a database with a different name than the original. \
 Example: rewrite-db='from->to'.",
    0, 0, 0, GET_STR, REQUIRED_ARG, 0, 0, 0, 0, 0, 0},
-  {"skip-annotate-row-events", OPT_SKIP_ANNOTATE_ROWS_EVENTS,
+  {"skip-annotate-row-events", 0,
    "Don't print Annotate_rows events stored in the binary log.",
    (uchar**) &opt_skip_annotate_row_events,
    (uchar**) &opt_skip_annotate_row_events,
    0, GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
-  {"print-table-metadata", OPT_PRINT_TABLE_METADATA,
+  {"print-table-metadata", 0,
    "Print metadata stored in Table_map_log_event",
    &opt_print_table_metadata, &opt_print_table_metadata, 0,
    GET_BOOL, NO_ARG, 0, 0, 0, 0, 0, 0},
@@ -1769,7 +1774,7 @@ static void warning(const char *format,...)
 static void cleanup()
 {
   DBUG_ENTER("cleanup");
-  my_free(pass);
+  my_free(opt_password);
   my_free(database);
   my_free(table);
   my_free(host);
@@ -2090,9 +2095,9 @@ get_one_option(const struct my_option *opt, const char *argument,
         One should not really change the argument, but we make an
         exception for passwords
       */
-      my_free(pass);
+      my_free(opt_password);
       char *start= (char*) argument;
-      pass= my_strdup(PSI_NOT_INSTRUMENTED, argument,MYF(MY_FAE));
+      opt_password= my_strdup(PSI_NOT_INSTRUMENTED, argument,MYF(MY_FAE));
       while (*argument)
         *(char*)argument++= 'x';		/* Destroy argument */
       if (*start)
@@ -2115,16 +2120,12 @@ get_one_option(const struct my_option *opt, const char *argument,
       die(1);
     }
     break;
-#ifdef WHEN_FLASHBACK_REVIEW_READY
-  case opt_flashback_review:
-    opt_flashback_review= 1;
-    break;
-#endif
   case OPT_START_DATETIME:
     start_datetime= convert_str_to_timestamp(start_datetime_str);
     break;
   case OPT_STOP_DATETIME:
     stop_datetime= convert_str_to_timestamp(stop_datetime_str);
+    stop_datetime_given= true;
     break;
   case OPT_BASE64_OUTPUT_MODE:
     int val;
@@ -2261,7 +2262,7 @@ get_one_option(const struct my_option *opt, const char *argument,
     break;
   }
   if (tty_password)
-    pass= my_get_tty_password(NullS);
+    opt_password= my_get_tty_password(NullS);
 
   return 0;
 }
@@ -2269,6 +2270,11 @@ get_one_option(const struct my_option *opt, const char *argument,
 static int parse_args(int *argc, char*** argv)
 {
   int ho_error;
+  char *tmp;
+
+  tmp= getenv("MARIADB_HOST");
+  if (tmp && host == NULL)
+    host= my_strdup(PSI_NOT_INSTRUMENTED, tmp, MYF(MY_WME));
 
   if ((ho_error=handle_options(argc, argv, my_options, get_one_option)))
   {
@@ -2351,18 +2357,7 @@ static Exit_status safe_connect()
     return ERROR_STOP;
   }
 
-#ifdef HAVE_OPENSSL
-  if (opt_use_ssl)
-  {
-    mysql_ssl_set(mysql, opt_ssl_key, opt_ssl_cert, opt_ssl_ca,
-                  opt_ssl_capath, opt_ssl_cipher);
-    mysql_options(mysql, MYSQL_OPT_SSL_CRL, opt_ssl_crl);
-    mysql_options(mysql, MYSQL_OPT_SSL_CRLPATH, opt_ssl_crlpath);
-    mysql_options(mysql, MARIADB_OPT_TLS_VERSION, opt_tls_version);
-  }
-  mysql_options(mysql,MYSQL_OPT_SSL_VERIFY_SERVER_CERT,
-                (char*)&opt_ssl_verify_server_cert);
-#endif /*HAVE_OPENSSL*/
+  SET_SSL_OPTS_WITH_CHECK(mysql);
 
   if (opt_plugindir && *opt_plugindir)
     mysql_options(mysql, MYSQL_PLUGIN_DIR, opt_plugindir);
@@ -2375,7 +2370,7 @@ static Exit_status safe_connect()
   mysql_options(mysql, MYSQL_OPT_CONNECT_ATTR_RESET, 0);
   mysql_options4(mysql, MYSQL_OPT_CONNECT_ATTR_ADD,
                  "program_name", "mysqlbinlog");
-  if (!mysql_real_connect(mysql, host, user, pass, 0, port, sock, 0))
+  if (!mysql_real_connect(mysql, host, user, opt_password, 0, opt_mysql_port, sock, 0))
   {
     error("Failed on connect: %s", mysql_error(mysql));
     return ERROR_STOP;
@@ -2552,6 +2547,7 @@ static Exit_status check_master_version()
   case 5:
   case 10:
   case 11:
+  case 12:
     glob_description_event= new Format_description_log_event(4);
     break;
   default:
@@ -2939,6 +2935,7 @@ static Exit_status check_header(IO_CACHE* file,
   uchar buf[PROBE_HEADER_LEN];
   my_off_t tmp_pos, pos;
   MY_STAT my_file_stat;
+  int read_error;
 
   delete glob_description_event;
   if (!(glob_description_event= new Format_description_log_event(4)))
@@ -3021,7 +3018,8 @@ static Exit_status check_header(IO_CACHE* file,
         Format_description_log_event *new_description_event;
         my_b_seek(file, tmp_pos); /* seek back to event's start */
         if (!(new_description_event= (Format_description_log_event*) 
-              Log_event::read_log_event(file, glob_description_event,
+              Log_event::read_log_event(file, &read_error,
+                                        glob_description_event,
                                         opt_verify_binlog_checksum)))
           /* EOF can't be hit here normally, so it's a real error */
         {
@@ -3054,7 +3052,8 @@ static Exit_status check_header(IO_CACHE* file,
       {
         Log_event *ev;
         my_b_seek(file, tmp_pos); /* seek back to event's start */
-        if (!(ev= Log_event::read_log_event(file, glob_description_event,
+        if (!(ev= Log_event::read_log_event(file, &read_error,
+                                            glob_description_event,
                                             opt_verify_binlog_checksum)))
         {
           /* EOF can't be hit here normally, so it's a real error */
@@ -3167,8 +3166,10 @@ static Exit_status dump_local_log_entries(PRINT_EVENT_INFO *print_event_info,
   {
     char llbuff[21];
     my_off_t old_off = my_b_tell(file);
+    int read_error;
 
-    Log_event* ev = Log_event::read_log_event(file, glob_description_event,
+    Log_event* ev = Log_event::read_log_event(file, &read_error,
+                                              glob_description_event,
                                               opt_verify_binlog_checksum);
     if (!ev)
     {
@@ -3177,15 +3178,28 @@ static Exit_status dump_local_log_entries(PRINT_EVENT_INFO *print_event_info,
         about a corruption, but treat it as EOF and move to the next binlog.
       */
       if (glob_description_event->flags & LOG_EVENT_BINLOG_IN_USE_F)
-        file->error= 0;
-      else if (file->error)
+        read_error= 0;
+      else if (read_error)
       {
         error("Could not read entry at offset %s: "
               "Error in log format or read error.",
               llstr(old_off,llbuff));
         goto err;
       }
-      // file->error == 0 means EOF, that's OK, we break in this case
+      // else read_error == 0 means EOF, that's OK, we break in this case
+
+      /*
+        Emit a warning in the event that we finished processing input
+        before reaching the boundary indicated by --stop-position.
+      */
+      if (((longlong)stop_position != stop_position_default) &&
+          stop_position > my_b_tell(file))
+      {
+          retval = OK_STOP;
+          warning("Did not reach stop position %llu before "
+                  "end of input", stop_position);
+      }
+
       goto end;
     }
     if ((retval= process_event(print_event_info, ev, old_off, logname)) !=
@@ -3243,7 +3257,8 @@ int main(int argc, char** argv)
   {
     if (!opt_version)
     {
-      usage();
+      error("Please provide the log file(s). Run with '--help' for usage "
+            "instructions.");
       retval= ERROR_STOP;
     }
     goto err;
@@ -3283,7 +3298,7 @@ int main(int argc, char** argv)
     if (stop_position != (ulonglong)(~(my_off_t)0))
       warning("The --stop-position option is ignored in raw mode");
 
-    if (stop_datetime != MY_TIME_T_MAX)
+    if (stop_datetime_given)
       warning("The --stop-datetime option is ignored in raw mode");
     result_file= 0;
     if (result_file_name)
@@ -3365,6 +3380,10 @@ int main(int argc, char** argv)
     start_position= BIN_LOG_HEADER_SIZE;
   }
 
+  if (stop_datetime_given && stop_datetime > last_processed_datetime)
+    warning("Did not reach stop datetime '%s' before end of input",
+            stop_datetime_str);
+
   /*
     If enable flashback, need to print the events from the end to the
     beginning
@@ -3422,8 +3441,13 @@ int main(int argc, char** argv)
 
   if (tmpdir.list)
     free_tmpdir(&tmpdir);
-  if (result_file && result_file != stdout)
-    my_fclose(result_file, MYF(0));
+  if (result_file)
+  {
+    if (result_file != stdout)
+      my_fclose(result_file, MYF(0));
+    else
+      fflush(result_file);
+  }
 
   /*
     Ensure the GTID state is correct. If not, end in error.

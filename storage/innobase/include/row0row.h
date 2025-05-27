@@ -327,22 +327,6 @@ row_get_clust_rec(
 	mtr_t*		mtr)	/*!< in: mtr */
 	MY_ATTRIBUTE((nonnull, warn_unused_result));
 
-/** Parse the integer data from specified data, which could be
-DATA_INT, DATA_FLOAT or DATA_DOUBLE. If the value is less than 0
-and the type is not unsigned then we reset the value to 0
-@param[in]	data		data to read
-@param[in]	len		length of data
-@param[in]	mtype		mtype of data
-@param[in]	unsigned_type	if the data is unsigned
-@return the integer value from the data */
-inline
-ib_uint64_t
-row_parse_int(
-	const byte*	data,
-	ulint		len,
-	ulint		mtype,
-	bool		unsigned_type);
-
 /***************************************************************//**
 Searches an index record.
 @return whether the record was found */
@@ -355,6 +339,12 @@ row_search_index_entry(
 				be closed by the caller */
 	mtr_t*		mtr)	/*!< in: mtr */
 	MY_ATTRIBUTE((nonnull, warn_unused_result));
+
+/** Get the byte offset of the DB_TRX_ID column
+@param[in]	rec	clustered index record
+@param[in]	index	clustered index
+@return	the byte offset of DB_TRX_ID, from the start of rec */
+ulint row_trx_id_offset(const rec_t* rec, const dict_index_t* index);
 
 #define ROW_COPY_DATA		1
 #define ROW_COPY_POINTERS	2

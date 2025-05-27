@@ -296,7 +296,7 @@ functions:
          cache block by block.
  6. Query_cache::resize
        - Used to change the available memory used by the query cache. This
-         will also invalidate the entrie query cache in one free operation.
+         will also invalidate the entire query cache in one free operation.
  7. Query_cache::pack
        - Used when a FLUSH QUERY CACHE is issued. This changes the order of
          the used memory blocks in physical memory order and move all avail-
@@ -338,7 +338,6 @@ TODO list:
 #include "sql_base.h"                           // TMP_TABLE_KEY_EXTRA
 #include "debug_sync.h"                         // DEBUG_SYNC
 #include "sql_table.h"
-#ifdef HAVE_QUERY_CACHE
 #include <m_ctype.h>
 #include <my_dir.h>
 #include <hash.h>
@@ -840,13 +839,13 @@ void Query_cache_block::destroy()
   DBUG_VOID_RETURN;
 }
 
-uint Query_cache_block::headers_len()
+uint Query_cache_block::headers_len() const
 {
   return (ALIGN_SIZE(sizeof(Query_cache_block_table)*n_tables) +
 	  ALIGN_SIZE(sizeof(Query_cache_block)));
 }
 
-uchar* Query_cache_block::data(void)
+uchar* Query_cache_block::data(void) const
 {
   return (uchar*)( ((uchar*)this) + headers_len() );
 }
@@ -893,14 +892,14 @@ Query_cache_block_table * Query_cache_block::table(TABLE_COUNTER_TYPE n)
 
 extern "C"
 {
-uchar *query_cache_table_get_key(const uchar *record, size_t *length,
-				my_bool not_used __attribute__((unused)))
+const uchar *query_cache_table_get_key(const void *record, size_t *length,
+                                       my_bool)
 {
-  Query_cache_block* table_block = (Query_cache_block*) record;
-  *length = (table_block->used - table_block->headers_len() -
-	     ALIGN_SIZE(sizeof(Query_cache_table)));
-  return (((uchar *) table_block->data()) +
-	  ALIGN_SIZE(sizeof(Query_cache_table)));
+  auto table_block= static_cast<const Query_cache_block *>(record);
+  *length= (table_block->used - table_block->headers_len() -
+            ALIGN_SIZE(sizeof(Query_cache_table)));
+  return reinterpret_cast<const uchar *>(
+      ((table_block->data()) + ALIGN_SIZE(sizeof(Query_cache_table))));
 }
 }
 
@@ -991,14 +990,14 @@ void Query_cache_query::unlock_n_destroy()
 
 extern "C"
 {
-uchar *query_cache_query_get_key(const uchar *record, size_t *length,
-				my_bool not_used)
+const uchar *query_cache_query_get_key(const void *record, size_t *length,
+                                       my_bool)
 {
-  Query_cache_block *query_block = (Query_cache_block*) record;
-  *length = (query_block->used - query_block->headers_len() -
-	     ALIGN_SIZE(sizeof(Query_cache_query)));
-  return (((uchar *) query_block->data()) +
-	  ALIGN_SIZE(sizeof(Query_cache_query)));
+  auto query_block= static_cast<const Query_cache_block *>(record);
+  *length= (query_block->used - query_block->headers_len() -
+            ALIGN_SIZE(sizeof(Query_cache_query)));
+  return reinterpret_cast<const uchar *>
+      (((query_block->data()) + ALIGN_SIZE(sizeof(Query_cache_query))));
 }
 }
 
@@ -1373,7 +1372,7 @@ void Query_cache::store_query(THD *thd, TABLE_LIST *tables_used)
     Testing 'query_cache_size' without a lock here is safe: the thing
     we may loose is that the query won't be cached, but we save on
     mutex locking in the case when query cache is disabled or the
-    query is uncachable.
+    query is uncacheable.
 
     See also a note on double-check locking usage above.
   */
@@ -2530,14 +2529,9 @@ void Query_cache::destroy()
 
 void Query_cache::disable_query_cache(THD *thd)
 {
+  lock(thd);
   m_cache_status= DISABLE_REQUEST;
-  /*
-    If there is no requests in progress try to free buffer.
-    try_lock(TRY) will exit immediately if there is lock.
-    unlock() should free block.
-  */
-  if (m_requests_in_progress == 0 && !try_lock(thd, TRY))
-    unlock();
+  unlock();
 }
 
 
@@ -2566,7 +2560,7 @@ void Query_cache::init()
     0x0A LINE FEED
     0x0B VERTICAL TAB
     0x0C FORM FEED
-    0x0D CARRIAGE RETUR
+    0x0D CARRIAGE RETURN
     0x20 SPACE
     
     Additionally, only some of the ASCII-compatible character sets
@@ -3593,7 +3587,7 @@ Query_cache::insert_table(THD *thd, size_t key_len, const char *key,
     header->set_hashed(hash);
 
     /*
-      We insert this table without the assumption that it isn't refrenenced by
+      We insert this table without the assumption that it isn't referenced by
       any queries.
     */
     header->m_cached_query_count= 0;
@@ -3665,7 +3659,7 @@ Query_cache::allocate_block(size_t len, my_bool not_less, size_t min)
 
   if (len >= MY_MIN(query_cache_size, query_cache_limit))
   {
-    DBUG_PRINT("qcache", ("Query cache hase only %zu memory and limit %zu",
+    DBUG_PRINT("qcache", ("Query cache has only %zu memory and limit %zu",
 			query_cache_size, query_cache_limit));
     DBUG_RETURN(0); // in any case we don't have such piece of memory
   }
@@ -3707,7 +3701,7 @@ Query_cache::get_free_block(size_t len, my_bool not_less, size_t min)
       first = list;
       uint n = 0;
       while ( n < QUERY_CACHE_MEM_BIN_TRY &&
-	      first->length < len) //we don't need irst->next != list
+	      first->length < len) //we don't need first->next != list
       {
 	first=first->next;
 	n++;
@@ -4178,7 +4172,7 @@ Query_cache::is_cacheable(THD *thd, LEX *lex,
     if (thd->in_multi_stmt_transaction_mode() &&
 	((*tables_type)&HA_CACHE_TBL_TRANSACT))
     {
-      DBUG_PRINT("qcache", ("not in autocommin mode"));
+      DBUG_PRINT("qcache", ("not in autocommit mode"));
       DBUG_RETURN(0);
     }
     DBUG_PRINT("qcache", ("select is using %d tables", table_count));
@@ -4334,10 +4328,10 @@ my_bool Query_cache::move_by_type(uchar **border,
 		      *new_block =(Query_cache_block *) *border;
     size_t tablename_offset = block->table()->table() - block->table()->db();
     char *data = (char*) block->data();
-    uchar *key;
+    const uchar *key;
     size_t key_length;
-    key=query_cache_table_get_key((uchar*) block, &key_length, 0);
-    my_hash_first(&tables, (uchar*) key, key_length, &record_idx);
+    key=query_cache_table_get_key( block, &key_length, 0);
+    my_hash_first(&tables, key, key_length, &record_idx);
 
     block->destroy();
     new_block->init(len);
@@ -4394,10 +4388,10 @@ my_bool Query_cache::move_by_type(uchar **border,
     char *data = (char*) block->data();
     Query_cache_block *first_result_block = ((Query_cache_query *)
 					     block->data())->result();
-    uchar *key;
+    const uchar *key;
     size_t key_length;
-    key=query_cache_query_get_key((uchar*) block, &key_length, 0);
-    my_hash_first(&queries, (uchar*) key, key_length, &record_idx);
+    key=query_cache_query_get_key( block, &key_length, 0);
+    my_hash_first(&queries, key, key_length, &record_idx);
     block->query()->unlock_n_destroy();
     block->destroy();
     // Move table of used tables
@@ -4902,7 +4896,7 @@ my_bool Query_cache::check_integrity(bool locked)
 
     DBUG_PRINT("qcache", ("block %p, type %u...", 
 			  block, (uint) block->type));  
-    // Check allignment
+    // Check alignment
     if ((((size_t)block) % ALIGN_SIZE(1)) !=
 	(((size_t)first_block) % ALIGN_SIZE(1)))
     {
@@ -4988,7 +4982,7 @@ my_bool Query_cache::check_integrity(bool locked)
       break;
     }
     case Query_cache_block::RES_INCOMPLETE:
-      // This type of block can be not lincked yet (in multithread environment)
+      // This type of block can be not linked yet (in multithread environment)
       break;
     case Query_cache_block::RES_BEG:
     case Query_cache_block::RES_CONT:
@@ -5051,9 +5045,9 @@ my_bool Query_cache::check_integrity(bool locked)
       DBUG_PRINT("qcache", ("block %p, type %u...", 
 			    block, (uint) block->type));
       size_t length;
-      uchar *key = query_cache_query_get_key((uchar*) block, &length, 0);
+      const uchar *key= query_cache_query_get_key(block, &length, 0);
       uchar* val = my_hash_search(&queries, key, length);
-      if (((uchar*)block) != val)
+      if ((reinterpret_cast<uchar *>(block)) != val)
       {
 	DBUG_PRINT("error", ("block %p found in queries hash like %p",
 			     block, val));
@@ -5086,9 +5080,9 @@ my_bool Query_cache::check_integrity(bool locked)
       DBUG_PRINT("qcache", ("block %p, type %u...", 
 			    block, (uint) block->type));
       size_t length;
-      uchar *key = query_cache_table_get_key((uchar*) block, &length, 0);
+      const uchar *key= query_cache_table_get_key(block, &length, 0);
       uchar* val = my_hash_search(&tables, key, length);
-      if (((uchar*)block) != val)
+      if (reinterpret_cast<uchar *>(block) != val)
       {
 	DBUG_PRINT("error", ("block %p found in tables hash like %p",
 			     block, val));
@@ -5156,7 +5150,7 @@ my_bool Query_cache::in_blocks(Query_cache_block * point)
   if (block != first_block)
   {
     DBUG_PRINT("error",
-	       ("block %p (%p<-->%p) not owned by pysical list",
+	       ("block %p (%p<-->%p) not owned by physical list",
 		block, block->pprev, block->pnext));
     return 1;
   }
@@ -5169,7 +5163,7 @@ err1:
     if (block->pnext->pprev != block)
     {
       DBUG_PRINT("error",
-		 ("block %p in physicel list is incorrect linked, next block %p referred as prev to %p (check from %p)",
+		 ("block %p in physical list is incorrect linked, next block %p referred as prev to %p (check from %p)",
 		  block, block->pnext,
 		  block->pnext->pprev,
 		  point));
@@ -5325,6 +5319,3 @@ err2:
 }
 
 #endif /* DBUG_OFF */
-
-#endif /*HAVE_QUERY_CACHE*/
-

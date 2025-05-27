@@ -79,7 +79,7 @@ struct monitor_value_t {
 	monitor_running_t mon_status;	/* whether monitor still running */
 };
 
-/** Follwoing defines are possible values for "monitor_type" field in
+/** Following defines are possible values for "monitor_type" field in
 "struct monitor_info" */
 enum monitor_type_t {
 	MONITOR_NONE = 0,	/*!< No monitoring */
@@ -156,7 +156,7 @@ enum monitor_id_t {
 	MONITOR_OVLD_ROW_LOCK_WAIT,
 	MONITOR_OVLD_LOCK_AVG_WAIT_TIME,
 
-	/* Buffer and I/O realted counters. */
+	/* Buffer and I/O related counters. */
 	MONITOR_MODULE_BUFFER,
 	MONITOR_OVLD_BUFFER_POOL_SIZE,
 	MONITOR_OVLD_BUF_POOL_READS,
@@ -194,7 +194,6 @@ enum monitor_id_t {
 	MONITOR_FLUSH_ADAPTIVE_AVG_PASS,
 
 	MONITOR_LRU_GET_FREE_LOOPS,
-	MONITOR_LRU_GET_FREE_WAITS,
 
 	MONITOR_FLUSH_AVG_PAGE_RATE,
 	MONITOR_FLUSH_LSN_AVG_RATE,
@@ -215,7 +214,6 @@ enum monitor_id_t {
 	MONITOR_LRU_BATCH_SCANNED_PER_CALL,
 	MONITOR_LRU_BATCH_FLUSH_TOTAL_PAGE,
 	MONITOR_LRU_BATCH_EVICT_TOTAL_PAGE,
-	MONITOR_LRU_SINGLE_FLUSH_FAILURE_COUNT,
 	MONITOR_LRU_GET_FREE_SEARCH,
 	MONITOR_LRU_SEARCH_SCANNED,
 	MONITOR_LRU_SEARCH_SCANNED_NUM_CALL,
@@ -434,11 +432,11 @@ counter option. */
   (monitor_set_tbl[unsigned(monitor) / NUM_BITS_ULINT] &                      \
    (ulint(1) << (unsigned(monitor) % NUM_BITS_ULINT)))
 
-/** The actual monitor counter array that records each monintor counter
+/** The actual monitor counter array that records each monitor counter
 value */
 extern monitor_value_t	 innodb_counter_value[NUM_MONITOR];
 
-/** Following are macro defines for basic montior counter manipulations.
+/** Following are macro defines for basic monitor counter manipulations.
 Please note we do not provide any synchronization for these monitor
 operations due to performance consideration. Most counters can
 be placed under existing mutex protections in respective code
@@ -681,7 +679,7 @@ is monotonically increasing, only max value needs to be updated */
 		}							\
 	}
 
-/** Some values such as log sequence number are montomically increasing
+/** Some values such as log sequence number are monotonically increasing
 number, do not need to record max/min values */
 #define MONITOR_SET_SIMPLE(monitor, value)				\
 	MONITOR_CHECK_DEFINED(value);					\

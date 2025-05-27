@@ -71,11 +71,6 @@
 #include "tabvct.h"
 #include "valblk.h"
 
-#if defined(UNIX)
-//add dummy strerror   (NGC)
-char *strerror(int num);
-#endif   // UNIX
-
 /***********************************************************************/
 /*  External function.                                                 */
 /***********************************************************************/
@@ -295,7 +290,7 @@ PCOL TDBVCT::MakeCol(PGLOBAL g, PCOLDEF cdp, PCOL cprec, int n)
 /***********************************************************************/
 bool TDBVCT::IsUsingTemp(PGLOBAL)
   {
-  // For developpers
+  // For developers
   return (UseTemp() == TMP_TEST);
   } // end of IsUsingTemp
 

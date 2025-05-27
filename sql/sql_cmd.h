@@ -20,6 +20,8 @@
 #ifndef SQL_CMD_INCLUDED
 #define SQL_CMD_INCLUDED
 
+#include "my_base.h"
+
 /*
   When a command is added here, be sure it's also added in mysqld.cc
   in "struct show_var_st status_vars[]= {" ...
@@ -109,6 +111,7 @@ enum enum_sql_command {
   SQLCOM_SHOW_STATUS_PACKAGE_BODY,
   SQLCOM_SHOW_PACKAGE_BODY_CODE,
   SQLCOM_BACKUP, SQLCOM_BACKUP_LOCK,
+  SQLCOM_SHOW_CREATE_SERVER,
 
   /*
     When a command is added here, be sure it's also added in mysqld.cc
@@ -119,6 +122,7 @@ enum enum_sql_command {
 };
 
 struct TABLE_LIST;
+struct handlerton;
 
 class Storage_engine_name
 {
@@ -133,10 +137,10 @@ public:
   Storage_engine_name(const LEX_CSTRING &name)
    :m_storage_engine_name(name)
   { }
-  bool resolve_storage_engine_with_error(THD *thd,
-                                         handlerton **ha,
+  bool resolve_storage_engine_with_error(THD *thd, handlerton **ha,
                                          bool tmp_table);
   bool is_set() { return m_storage_engine_name.str != NULL; }
+  const LEX_CSTRING *name() const { return &m_storage_engine_name; }
 };
 
 
@@ -311,23 +315,25 @@ public:
     @param thd  global context the processed statement
     @returns false on success, true on error
   */
-  virtual bool prepare(THD *thd);
+  bool prepare(THD *thd) override;
 
   /**
     Execute the processed statement once
     @param thd  global context the processed statement
     @returns false on success, true on error
   */
-  virtual bool execute(THD *thd);
+  bool execute(THD *thd) override;
 
-  virtual bool is_dml() const { return true; }
+  bool is_dml() const override { return true; }
 
   select_result *get_result() { return result; }
+
+  ha_rows get_scanned_rows() { return scanned_rows; }
 
 protected:
   Sql_cmd_dml()
       : Sql_cmd(), lex(nullptr), result(nullptr),
-        m_empty_query(false)
+        m_empty_query(false), scanned_rows(0)
   {}
 
   /**
@@ -394,26 +400,7 @@ protected:
   LEX *lex;              /**< Pointer to LEX for this statement */
   select_result *result; /**< Pointer to object for handling of the result */
   bool m_empty_query;    /**< True if query will produce no rows */
-};
-
-
-class Sql_cmd_show_slave_status: public Sql_cmd
-{
-protected:
-  bool show_all_slaves_status;
-public:
-  Sql_cmd_show_slave_status()
-    :show_all_slaves_status(false)
-  {}
-
-  Sql_cmd_show_slave_status(bool status_all)
-    :show_all_slaves_status(status_all)
-  {}
-
-  enum_sql_command sql_command_code() const { return SQLCOM_SHOW_SLAVE_STAT; }
-
-  bool execute(THD *thd);
-  bool is_show_all_slaves_stat() { return show_all_slaves_status; }
+  ha_rows scanned_rows; /**< Number of scanned rows */
 };
 
 
@@ -421,20 +408,20 @@ class Sql_cmd_create_table_like: public Sql_cmd,
                                  public Storage_engine_name
 {
 public:
-  Storage_engine_name *option_storage_engine_name() { return this; }
-  bool execute(THD *thd);
+  Storage_engine_name *option_storage_engine_name() override { return this; }
+  bool execute(THD *thd) override;
 };
 
 class Sql_cmd_create_table: public Sql_cmd_create_table_like
 {
 public:
-  enum_sql_command sql_command_code() const { return SQLCOM_CREATE_TABLE; }
+  enum_sql_command sql_command_code() const override { return SQLCOM_CREATE_TABLE; }
 };
 
 class Sql_cmd_create_sequence: public Sql_cmd_create_table_like
 {
 public:
-  enum_sql_command sql_command_code() const { return SQLCOM_CREATE_SEQUENCE; }
+  enum_sql_command sql_command_code() const override { return SQLCOM_CREATE_SEQUENCE; }
 };
 
 
@@ -458,9 +445,9 @@ public:
     @param thd the current thread.
     @return false on success.
   */
-  bool execute(THD *thd);
+  bool execute(THD *thd) override;
 
-  virtual enum_sql_command sql_command_code() const
+  enum_sql_command sql_command_code() const override
   {
     return SQLCOM_CALL;
   }

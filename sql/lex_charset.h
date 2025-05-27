@@ -289,6 +289,12 @@ public:
     DBUG_ASSERT(0);
     return m_ci->coll_name;
   }
+  static Lex_extended_collation_st collate_default()
+  {
+    Lex_extended_collation_st res;
+    res.set_collate_default();
+    return res;
+  }
   void set_collate_default()
   {
     m_ci= &my_collation_contextually_typed_default;
@@ -438,7 +444,7 @@ public:
      CREATE TABLE t2 (a CHAR(10) BINARY) CHARACTER SET latin2; -- (3a)
      CREATE TABLE t2 (a CHAR(10) BINARY);                      -- (3b)
      CREATE TABLE t2 (a CHAR(10) COLLATE DEFAULT)
-       CHARACER SET latin2 COLLATE latin2_bin;                 -- (3c)
+       CHARACTER SET latin2 COLLATE latin2_bin;                 -- (3c)
 
   In case of an empty or a contextually typed collation,
   it is a subject to later resolution, when the context

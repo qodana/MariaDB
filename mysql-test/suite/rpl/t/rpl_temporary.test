@@ -4,6 +4,7 @@ SET sql_log_bin = 0;
 source include/add_anonymous_users.inc;
 SET sql_log_bin = 1;
 
+set @@binlog_format="statement";
 -- source include/master-slave.inc
 
 # Clean up old slave's binlogs.
@@ -179,7 +180,7 @@ drop temporary table t3;
 
 select * from t2 ORDER BY f;
 
-# Commented out 8/30/2005 to make compatable with both sbr and rbr
+# Commented out 8/30/2005 to make compatible with both sbr and rbr
 #--replace_result $VERSION VERSION
 #--replace_column 2 # 5 #
 #show binlog events;
@@ -346,7 +347,9 @@ GRANT PROCESS ON *.* TO user43748@127.0.0.1;
 connect (cont43748,127.0.0.1,user43748,meow,"*NO-ONE*",$SLAVE_MYPORT,);
 connection cont43748;
 
+--disable_cursor_protocol
 SELECT id INTO @id FROM information_schema.processlist WHERE user='system user' LIMIT 1;
+--enable_cursor_protocol
 
 --error ER_KILL_DENIED_ERROR,ER_NO_SUCH_THREAD
 KILL @id;

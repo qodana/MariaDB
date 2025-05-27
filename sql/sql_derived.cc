@@ -388,7 +388,7 @@ bool mysql_derived_merge(THD *thd, LEX *lex, TABLE_LIST *derived)
       make_leaves_list(thd, dt_select->leaf_tables, derived, TRUE, 0);
     } 
 
-    derived->nested_join= (NESTED_JOIN*) thd->calloc(sizeof(NESTED_JOIN));
+    derived->nested_join= thd->calloc<NESTED_JOIN>(1);
     if (!derived->nested_join)
     {
       res= TRUE;
@@ -431,7 +431,7 @@ bool mysql_derived_merge(THD *thd, LEX *lex, TABLE_LIST *derived)
       derived->on_expr= expr;
       derived->prep_on_expr= expr->copy_andor_structure(thd);
     }
-    thd->where= "on clause";
+    thd->where= THD_WHERE::ON_CLAUSE;
     if (derived->on_expr &&
         derived->on_expr->fix_fields_if_needed_for_bool(thd, &derived->on_expr))
     {
@@ -702,7 +702,7 @@ bool mysql_derived_prepare(THD *thd, LEX *lex, TABLE_LIST *derived)
   {
     /* 
       Here 'derived' is either a non-recursive table reference to a recursive
-      with table or a recursive table reference to a recursvive table whose
+      with table or a recursive table reference to a recursive table whose
       specification has been already prepared (a secondary recursive table
       reference.
     */ 
@@ -883,6 +883,14 @@ bool mysql_derived_prepare(THD *thd, LEX *lex, TABLE_LIST *derived)
                                                    0))
   { 
     thd->create_tmp_table_for_derived= FALSE;
+    if (thd->is_error())
+    {
+      /*
+        EOM error, or attempted to a create a table with a Field
+        of a not allowed data type, e.g. SYS_REFCURSOR.
+      */
+      res= true;
+    }
     goto exit;
   }
   thd->create_tmp_table_for_derived= FALSE;
@@ -1112,7 +1120,7 @@ bool mysql_derived_create(THD *thd, LEX *lex, TABLE_LIST *derived)
 
 void TABLE_LIST::register_as_derived_with_rec_ref(With_element *rec_elem)
 {
-  rec_elem->derived_with_rec_ref.link_in_list(this, &this->next_with_rec_ref);
+  rec_elem->derived_with_rec_ref.insert(this, &this->next_with_rec_ref);
   is_derived_with_recursive_reference= true;
   get_unit()->uncacheable|= UNCACHEABLE_DEPENDENT;
 }
@@ -1209,8 +1217,12 @@ bool mysql_derived_fill(THD *thd, LEX *lex, TABLE_LIST *derived)
                        (derived->alias.str ? derived->alias.str : "<NULL>"),
                        derived->get_unit()));
 
-  if (unit->executed && !unit->uncacheable && !unit->describe &&
-      !derived_is_recursive)
+  /*
+    Only fill derived tables once, unless the derived table is dependent in
+    which case we will delete all of its rows and refill it below.
+  */
+  if (unit->executed && !(unit->uncacheable & UNCACHEABLE_DEPENDENT) &&
+      !unit->describe && !derived_is_recursive)
     DBUG_RETURN(FALSE);
   /*check that table creation passed without problems. */
   DBUG_ASSERT(derived->table && derived->table->is_created());
@@ -1225,7 +1237,9 @@ bool mysql_derived_fill(THD *thd, LEX *lex, TABLE_LIST *derived)
     /* Execute the query that specifies the derived table by a foreign engine */
     res= derived->pushdown_derived->execute();
     unit->executed= true;
+    if (res)
       DBUG_RETURN(res);
+    goto after_exec;
   }
 
   if (unit->executed && !derived_is_recursive &&
@@ -1235,6 +1249,9 @@ bool mysql_derived_fill(THD *thd, LEX *lex, TABLE_LIST *derived)
       goto err;
     JOIN *join= unit->first_select()->join;
     join->first_record= false;
+    if (join->zero_result_cause)
+      goto err;
+
     for (uint i= join->top_join_tab_count;
          i < join->top_join_tab_count + join->aggr_tables;
          i++)
@@ -1264,6 +1281,7 @@ bool mysql_derived_fill(THD *thd, LEX *lex, TABLE_LIST *derived)
   }
   else
   {
+    DBUG_ASSERT(!unit->executed || (unit->uncacheable & UNCACHEABLE_DEPENDENT));
     SELECT_LEX *first_select= unit->first_select();
     unit->set_limit(unit->global_parameters());
     if (unit->lim.is_unlimited())
@@ -1283,6 +1301,7 @@ bool mysql_derived_fill(THD *thd, LEX *lex, TABLE_LIST *derived)
                       derived_result, unit, first_select);
   }
 
+ after_exec:
   if (!res && !derived_is_recursive)
   {
     if (derived_result->flush())
@@ -1342,6 +1361,13 @@ bool mysql_derived_reinit(THD *thd, LEX *lex, TABLE_LIST *derived)
                        (derived->alias.str ? derived->alias.str : "<NULL>"),
                        derived->get_unit()));
   st_select_lex_unit *unit= derived->get_unit();
+
+  if (derived->original_names_source)
+    unit->first_select()->set_item_list_names(derived->original_names);
+
+  // reset item names to that saved after wildcard expansion in JOIN::prepare
+  for(st_select_lex *sl= unit->first_select(); sl; sl= sl->next_select())
+    sl->restore_item_list_names();
 
   derived->merged_for_insert= FALSE;
   unit->unclean();
@@ -1551,6 +1577,7 @@ bool pushdown_cond_for_derived(THD *thd, Item *cond, TABLE_LIST *derived)
     if (sl != first_sl)
     {
       DBUG_ASSERT(sl->item_list.elements == first_sl->item_list.elements);
+      sl->save_item_list_names(thd);
       List_iterator_fast<Item> it(sl->item_list);
       List_iterator_fast<Item> nm_it(unit->types);
       while (Item *item= it++)

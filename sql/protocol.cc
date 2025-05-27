@@ -18,12 +18,8 @@
   @file
 
   Low level functions for storing data to be send to the MySQL client.
-  The actual communction is handled by the net_xxx functions in net_serv.cc
+  The actual communication is handled by the net_xxx functions in net_serv.cc
 */
-
-#ifdef USE_PRAGMA_IMPLEMENTATION
-#pragma implementation				// gcc: Class implementation
-#endif
 
 #include "mariadb.h"
 #include "sql_priv.h"
@@ -68,7 +64,7 @@ bool Protocol_binary::net_store_data(const uchar *from, size_t length)
   net_store_data_cs() - extended version with character set conversion.
   
   It is optimized for short strings whose length after
-  conversion is garanteed to be less than 251, which accupies
+  conversion is guaranteed to be less than 251, which occupies
   exactly one byte to store length. It allows not to use
   the "convert" member as a temporary buffer, conversion
   is done directly to the "packet" member.
@@ -85,7 +81,7 @@ bool Protocol_binary::net_store_data_cs(const uchar *from, size_t length,
 #endif
 {
   uint dummy_errors;
-  /* Calculate maxumum possible result length */
+  /* Calculate maximum possible result length */
   size_t conv_length= to_cs->mbmaxlen * length / from_cs->mbminlen;
 
   if (conv_length > 250)
@@ -324,6 +320,8 @@ Protocol::net_send_eof(THD *thd, uint server_status, uint statement_warn_count)
   NET *net= &thd->net;
   bool error= FALSE;
   DBUG_ENTER("Protocol::net_send_eof");
+  DBUG_PRINT("enter", ("status: %u  warn_count: %u",
+                       server_status, statement_warn_count));
 
   /*
     Check if client understand new format packets (OK instead of EOF)
@@ -412,7 +410,6 @@ static bool write_eof_packet(THD *thd, NET *net,
 
 bool Protocol::net_send_error_packet(THD *thd, uint sql_errno, const char *err,
                                      const char* sqlstate)
-
 {
   NET *net= &thd->net;
   uint length;
@@ -485,7 +482,7 @@ bool Protocol::net_send_error_packet(THD *thd, uint sql_errno, const char *err,
   We keep a separate version for that range because it's widely used in
   libmysql.
 
-  uint is used as agrument type because of MySQL type conventions:
+  uint is used as argument type because of MySQL type conventions:
   - uint for 0..65536
   - ulong for 0..4294967296
   - ulonglong for bigger numbers.
@@ -592,6 +589,7 @@ void Protocol::end_statement()
 
   switch (thd->get_stmt_da()->status()) {
   case Diagnostics_area::DA_ERROR:
+    thd->stop_collecting_unit_results();
     /* The query failed, send error to log and abort bootstrap. */
     error= send_error(thd->get_stmt_da()->sql_errno(),
                       thd->get_stmt_da()->message(),
@@ -599,12 +597,36 @@ void Protocol::end_statement()
     break;
   case Diagnostics_area::DA_EOF:
   case Diagnostics_area::DA_EOF_BULK:
-    error= send_eof(thd->server_status,
+    if (thd->need_report_unit_results()) {
+      // bulk returning result-set, like INSERT ... RETURNING
+      // result is already send, needs an EOF with MORE_RESULT_EXISTS
+      // before sending unit result-set
+      error= send_eof(thd->server_status | SERVER_MORE_RESULTS_EXISTS,
+                          thd->get_stmt_da()->statement_warn_count());
+      if (thd->report_collected_unit_results() && thd->is_error())
+        error= send_error(thd->get_stmt_da()->sql_errno(),
+                          thd->get_stmt_da()->message(),
+                          thd->get_stmt_da()->get_sqlstate());
+      else
+        error= send_eof(thd->server_status,
+                    thd->get_stmt_da()->statement_warn_count());
+    }
+    else
+      error= send_eof(thd->server_status,
                     thd->get_stmt_da()->statement_warn_count());
     break;
   case Diagnostics_area::DA_OK:
   case Diagnostics_area::DA_OK_BULK:
-    error= send_ok(thd->server_status,
+    if (thd->report_collected_unit_results())
+      if (thd->is_error())
+        error= send_error(thd->get_stmt_da()->sql_errno(),
+                        thd->get_stmt_da()->message(),
+                        thd->get_stmt_da()->get_sqlstate());
+      else
+        error= send_eof(thd->server_status,
+                     thd->get_stmt_da()->statement_warn_count());
+    else
+      error= send_ok(thd->server_status,
                    thd->get_stmt_da()->statement_warn_count(),
                    thd->get_stmt_da()->affected_rows(),
                    thd->get_stmt_da()->last_insert_id(),
@@ -614,6 +636,7 @@ void Protocol::end_statement()
     break;
   case Diagnostics_area::DA_EMPTY:
   default:
+    thd->stop_collecting_unit_results();
     DBUG_ASSERT(0);
     error= send_ok(thd->server_status, 0, 0, 0, NULL);
     break;
@@ -939,7 +962,7 @@ bool Protocol_text::store_field_metadata(const THD * thd,
   Detect whether column info can be changed without
   PS repreparing.
 
-  Such colum info is called fragile. The opposite of
+  Such column info is called fragile. The opposite of
   fragile is.
 
 
@@ -1203,8 +1226,7 @@ bool Protocol::send_result_set_metadata(List<Item> *list, uint flags)
     Item *item;
     Protocol_text prot(thd, thd->variables.net_buffer_length);
 #ifndef DBUG_OFF
-    field_handlers= (const Type_handler **) thd->alloc(
-        sizeof(field_handlers[0]) * list->elements);
+    field_handlers= thd->alloc<const Type_handler *>(list->elements);
 #endif
 
     for (uint pos= 0; (item= it++); pos++)
@@ -1253,8 +1275,7 @@ bool Protocol::send_list_fields(List<Field> *list, const TABLE_LIST *table_list)
   Protocol_text prot(thd, thd->variables.net_buffer_length);
 
 #ifndef DBUG_OFF
-  field_handlers= (const Type_handler **) thd->alloc(sizeof(field_handlers[0]) *
-                                                     list->elements);
+  field_handlers= thd->alloc<const Type_handler *>(list->elements);
 #endif
 
   for (uint pos= 0; (fld= it++); pos++)
@@ -1390,33 +1411,6 @@ bool Protocol::store(I_List<i_string>* str_list)
   return store((char*) tmp.ptr(), tmp.length(),  tmp.charset());
 }
 
-
-/**
-  Send a set of strings as a string of key-value pairs with ',' in between.
-*/
-
-bool Protocol::store(I_List<i_string_pair>* str_list)
-{
-  char buf[256];
-  const char *delimiter= ",";
-  String tmp(buf, sizeof(buf), &my_charset_bin);
-  size_t delim_len= 0;
-  I_List_iterator<i_string_pair> it(*str_list);
-  i_string_pair* s;
-
-  tmp.length(0);
-  while ((s=it++))
-  {
-    tmp.append(delimiter, delim_len);
-    tmp.append(s->key, strlen(s->key));
-    tmp.append(STRING_WITH_LEN("->"));
-    tmp.append(s->val, strlen(s->val));
-    delim_len= 1;
-  }
-  return store((char*) tmp.ptr(), tmp.length(),  tmp.charset());
-}
-
-
 /****************************************************************************
   Functions to handle the simple (default) protocol where everything is
   This protocol is the one that is used by default between the MySQL server
@@ -1491,7 +1485,7 @@ bool Protocol_text::store_str(const char *from, size_t length,
                               CHARSET_INFO *fromcs, CHARSET_INFO *tocs)
 {
 #ifndef DBUG_OFF
-  DBUG_PRINT("info", ("Protocol_text::store field %u : %.*b", field_pos,
+  DBUG_PRINT("info", ("Protocol_text::store field %u : %.*sB", field_pos,
                       (int) length, (length == 0 ? "" : from)));
   DBUG_ASSERT(field_handlers == 0 || field_pos < field_count);
   DBUG_ASSERT(valid_handler(field_pos, PROTOCOL_SEND_STRING));
@@ -1507,7 +1501,7 @@ bool Protocol_text::store_numeric_zerofill_str(const char *from,
 {
 #ifndef DBUG_OFF
   DBUG_PRINT("info",
-       ("Protocol_text::store_numeric_zerofill_str field %u : %.*b",
+       ("Protocol_text::store_numeric_zerofill_str field %u : %.*sB",
         field_pos, (int) length, (length == 0 ? "" : from)));
   DBUG_ASSERT(field_handlers == 0 || field_pos < field_count);
   DBUG_ASSERT(valid_handler(field_pos, send_type));
@@ -1696,6 +1690,7 @@ bool Protocol_text::send_out_parameters(List<Item_param> *sp_params)
 
     DBUG_ASSERT(sparam->get_item_param() == NULL);
     sparam->set_value(thd, thd->spcont, reinterpret_cast<Item **>(&item_param));
+    item_param->expr_event_handler(thd, expr_event_t::DESTRUCT_DYNAMIC_PARAM);
   }
 
   return FALSE;
@@ -1946,6 +1941,7 @@ bool Protocol_binary::send_out_parameters(List<Item_param> *sp_params)
       if (!item_param->get_out_param_info())
         continue; // It's an IN-parameter.
 
+      item_param->expr_event_handler(thd, expr_event_t::DESTRUCT_DYNAMIC_PARAM);
       if (out_param_lst.push_back(item_param, thd->mem_root))
         return TRUE;
     }

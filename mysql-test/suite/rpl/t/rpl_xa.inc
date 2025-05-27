@@ -94,7 +94,9 @@ while ($p_trx)
 --connection master
   --let $xid=ro_$p_trx
   --let $query=`SELECT @query$p_trx`
+  --disable_cursor_protocol
   --source rpl_create_xa_prepared.inc
+  --enable_cursor_protocol
   --let $complete=`select if(floor(rand()*10)%2,'COMMIT','ROLLBACK')`
   --error 0
   --disable_query_log
@@ -111,14 +113,15 @@ while ($p_trx)
 
 
 --let $p_trx=$ro_cases
-# With diconnect
+# With disconnect
 while ($p_trx)
 {
 --connection master
   --let $xid=ro_$p_trx
   --let $query=`SELECT @query$p_trx`
+  --disable_cursor_protocol
   --source rpl_create_xa_prepared.inc
-
+  --enable_cursor_protocol
   --disconnect master_$xid
   --source include/wait_until_disconnected.inc
 
@@ -282,7 +285,7 @@ create table tm (a int) engine=myisam;
   --disconnect master_$xid
   --source include/wait_until_disconnected.inc
 
-# With diconnect
+# With disconnect
 --connection master
   --source rpl_create_xa_prepared.inc
   --disconnect master_$xid

@@ -30,7 +30,7 @@
     Walk through all VALUES items.
   @param
      @param processor      - the processor to call for each Item
-     @param walk_qubquery  - if should dive into subquery items
+     @param walk_subquery  - if should dive into subquery items
      @param argument       - the argument to pass recursively
   @retval
     true   on error
@@ -118,8 +118,8 @@ bool fix_fields_for_tvc(THD *thd, List_iterator_fast<List_item> &li)
     types and aggregates them with the previous ones stored in holders. If
     list_a is the first one in the list of lists its elements types are put in
     holders. The errors can be reported when count of list_a elements is
-    different from the first_list_el_count. Also error can be reported whe
-    n aggregation can't be made.
+    different from the first_list_el_count. Also error can be reported when
+    aggregation can't be made.
 
   @retval
     true    if an error was reported
@@ -258,7 +258,7 @@ bool table_value_constr::prepare(THD *thd, SELECT_LEX *sl,
   
   List_item *first_elem= li++;
   uint cnt= first_elem->elements;
-  Type_holder *holders;
+  Type_holder *holders= type_holders;
   
   if (cnt == 0)
   {
@@ -269,32 +269,38 @@ bool table_value_constr::prepare(THD *thd, SELECT_LEX *sl,
   if (fix_fields_for_tvc(thd, li))
     DBUG_RETURN(true);
 
-  if (!(holders= new (thd->stmt_arena->mem_root) Type_holder[cnt]) ||
-       join_type_handlers_for_tvc(thd, li, holders, cnt) ||
-       get_type_attributes_for_tvc(thd, li, holders,
-				   lists_of_values.elements, cnt))
-    DBUG_RETURN(true);
-  
-  List_iterator_fast<Item> it(*first_elem);
-  Item *item;
-  Query_arena *arena, backup;
-  arena=thd->activate_stmt_arena_if_needed(&backup);
-  
-  sl->item_list.empty();
-  for (uint pos= 0; (item= it++); pos++)
+  if (!holders)
   {
-    /* Error's in 'new' will be detected after loop */
-    Item_type_holder *new_holder= new (thd->mem_root)
-                      Item_type_holder(thd, item, holders[pos].type_handler(),
-                                       &holders[pos]/*Type_all_attributes*/,
-                                       holders[pos].get_maybe_null());
-    sl->item_list.push_back(new_holder);
+    DBUG_ASSERT(thd->stmt_arena->is_stmt_prepare_or_first_stmt_execute() ||
+                thd->stmt_arena->is_conventional());
+    holders= type_holders=
+      new (thd->active_stmt_arena_to_use()->mem_root) Type_holder[cnt];
+    if (!holders ||
+         join_type_handlers_for_tvc(thd, li, holders, cnt) ||
+         get_type_attributes_for_tvc(thd, li, holders,
+				     lists_of_values.elements, cnt))
+       DBUG_RETURN(true);
+    List_iterator_fast<Item> it(*first_elem);
+    Item *item;
+    Query_arena *arena, backup;
+    arena=thd->activate_stmt_arena_if_needed(&backup);
+
+    sl->item_list.empty();
+    for (uint pos= 0; (item= it++); pos++)
+    {
+      /* Error's in 'new' will be detected after loop */
+      Item_type_holder *new_holder= new (thd->mem_root)
+                        Item_type_holder(thd, item, holders[pos].type_handler(),
+                                         &holders[pos]/*Type_all_attributes*/,
+                                         holders[pos].get_maybe_null());
+      sl->item_list.push_back(new_holder);
+    }
+    if (arena)
+      thd->restore_active_arena(arena, &backup);
+
+    if (unlikely(thd->is_fatal_error))
+      DBUG_RETURN(true); // out of memory
   }
-  if (arena)
-    thd->restore_active_arena(arena, &backup);
-  
-  if (unlikely(thd->is_fatal_error))
-    DBUG_RETURN(true); // out of memory
     
   result= tmp_result;
   
@@ -306,7 +312,7 @@ bool table_value_constr::prepare(THD *thd, SELECT_LEX *sl,
     (thd->lex->context_analysis_only & CONTEXT_ANALYSIS_ONLY_VIEW)
   */
 
-  thd->where="order clause";
+  thd->where= THD_WHERE::ORDER_CLAUSE;
   ORDER *order= sl->order_list.first;
   for (; order; order=order->next)
   {
@@ -321,7 +327,7 @@ bool table_value_constr::prepare(THD *thd, SELECT_LEX *sl,
       if (!count || count > first_elem->elements)
       {
         my_error(ER_BAD_FIELD_ERROR, MYF(0),
-                 order_item->full_name(), thd->where);
+                 order_item->full_name(), thd_where(thd));
         DBUG_RETURN(true);
       }
       order->in_field_list= 1;
@@ -1165,7 +1171,7 @@ bool Item_func_in::to_be_transformed_into_in_subq(THD *thd)
   @details
     For each IN predicate from AND parts of the WHERE condition and/or
     ON expressions of the SELECT for this join the method performs
-    the intransformation into an equivalent IN sunquery if it's needed.
+    the intransformation into an equivalent IN subquery if it's needed.
 
   @retval
     false     always

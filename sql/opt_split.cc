@@ -83,7 +83,7 @@
   are evaluated then the optimizer should consider pushing t.a = t1.a,
   t.b = t2.b and (t.a = t1.a AND t.b = t2.b) to choose the best condition
   for splitting. Apparently here last condition is the best one because
-  it provides the miximum possible number of partitions.
+  it provides the minimum possible number of partitions.
 
   If we dropped the index on t3(a,b) and created the index on t3(a) instead
   then we would have two options for splitting: to push t.a = t1.a or to
@@ -160,7 +160,7 @@
   The set of all rows belonging to the union of several partitions is called
   here superpartition. If a grouping operation is defined by the list
   e_1,...,e_n then any set S = {e_i1,...,e_ik} can be used to devide all rows
-  into superpartions such that for any two rows r1, r2  the following holds:
+  into superpartitions such that for any two rows r1, r2  the following holds:
   e_ij(r1) = e_ij(r2) for each e_ij from S. We use the splitting technique
   only if S consists of references to colums  of the joined tables.
   For example if the GROUP BY list looks like this a, g(b), c we can consider
@@ -510,9 +510,7 @@ bool JOIN::check_for_splittable_materialized()
     the collected info on potential splittability of T
   */
   SplM_opt_info *spl_opt_info= new (thd->mem_root) SplM_opt_info();
-  SplM_field_info *spl_field=
-    (SplM_field_info *) (thd->calloc(sizeof(SplM_field_info) *
-                                            spl_field_cnt));
+  SplM_field_info *spl_field= thd->calloc<SplM_field_info>(spl_field_cnt);
 
   if (!(spl_opt_info && spl_field)) // consider T as not good for splitting
     return false;
@@ -615,8 +613,7 @@ void TABLE::add_splitting_info_for_key_field(KEY_FIELD *key_field)
   }
   if (!eq_item)
     return;
-  KEY_FIELD *added_key_field=
-    (KEY_FIELD *) thd->alloc(sizeof(KEY_FIELD));
+  KEY_FIELD *added_key_field= thd->alloc<KEY_FIELD>(1);
   if (!added_key_field ||
       spl_opt_info->added_key_fields.push_back(added_key_field,thd->mem_root))
     return;
@@ -673,8 +670,10 @@ add_ext_keyuse_for_splitting(Dynamic_array<KEYUSE_EXT> *ext_keyuses,
 
 
 static int
-sort_ext_keyuse(KEYUSE_EXT *a, KEYUSE_EXT *b)
+sort_ext_keyuse(const void *a_, const void *b_)
 {
+  const KEYUSE_EXT *a= static_cast<const KEYUSE_EXT *>(a_);
+  const KEYUSE_EXT *b= static_cast<const KEYUSE_EXT *>(b_);
   if (a->table->tablenr != b->table->tablenr)
     return (int) (a->table->tablenr - b->table->tablenr);
   if (a->key != b->key)
@@ -1000,7 +999,8 @@ SplM_plan_info * JOIN_TAB::choose_best_splitting(uint idx,
       table_map needed_in_prefix= 0;
       do
       {
-        if (keyuse_ext->needed_in_prefix & remaining_tables)
+        if (keyuse_ext->needed_in_prefix &
+            (remaining_tables | this->join->sjm_lookup_tables))
 	{
           keyuse_ext++;
           continue;
@@ -1105,9 +1105,8 @@ SplM_plan_info * JOIN_TAB::choose_best_splitting(uint idx,
       key_map spl_keys= table->keys_usable_for_splitting;
       if (!(first_non_const_pos->key &&
             spl_keys.is_set(first_non_const_pos->key->key)) ||
-          !(spl_plan= (SplM_plan_info *) thd->alloc(sizeof(SplM_plan_info))) ||
-	  !(spl_plan->best_positions=
-	     (POSITION *) thd->alloc(sizeof(POSITION) * join->table_count)) ||
+          !(spl_plan= thd->alloc<SplM_plan_info>(1)) ||
+	  !(spl_plan->best_positions= thd->alloc<POSITION>(join->table_count)) ||
 	  spl_opt_info->plan_cache.push_back(spl_plan))
       {
         reset_validity_vars_for_keyuses(best_key_keyuse_ext_start, best_table,
@@ -1359,6 +1358,7 @@ bool JOIN::fix_all_splittings_in_plan()
 {
   table_map prev_tables= 0;
   table_map all_tables= (table_map(1) << table_count) - 1;
+  table_map prev_sjm_lookup_tables= 0;
   for (uint tablenr= 0; tablenr < table_count; tablenr++)
   {
     POSITION *cur_pos= &best_positions[tablenr];
@@ -1367,7 +1367,7 @@ bool JOIN::fix_all_splittings_in_plan()
     {
       SplM_plan_info *spl_plan= cur_pos->spl_plan;
       table_map excluded_tables= (all_tables & ~prev_tables) |
-                                 sjm_lookup_tables;
+                                 prev_sjm_lookup_tables;
                                    ;
       if (spl_plan)
       {
@@ -1385,6 +1385,8 @@ bool JOIN::fix_all_splittings_in_plan()
           return true;
     }
     prev_tables|= tab->table->map;
+    if (cur_pos->sj_strategy == SJ_OPT_MATERIALIZE)
+        prev_sjm_lookup_tables|= tab->table->map;
   }
   return false;
 }

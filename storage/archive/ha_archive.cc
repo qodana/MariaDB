@@ -17,10 +17,6 @@
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1335  USA
 */
 
-#ifdef USE_PRAGMA_IMPLEMENTATION
-#pragma implementation        // gcc: Class implementation
-#endif
-
 #include <my_global.h>
 #include "sql_class.h"                          // SSV
 #include "sql_table.h"                          // build_table_filename
@@ -45,8 +41,8 @@
   
   We keep a file pointer open for each instance of ha_archive for each read
   but for writes we keep one open file handle just for that. We flush it
-  only if we have a read occur. azip handles compressing lots of records
-  at once much better then doing lots of little records between writes.
+  only if we have a read occur. azio handles compressing lots of records
+  at once much better than doing lots of little records between writes.
   It is possible to not lock on writes but this would then mean we couldn't
   handle bulk inserts as well (that is if someone was trying to read at
   the same time since we would want to flush).
@@ -64,7 +60,7 @@
 
   At some point a recovery method for such a drastic case needs to be divised.
 
-  Locks are row level, and you will get a consistant read. 
+  Locks are row level, and you will get a consistent read.
 
   For performance as far as table scans go it is quite fast. I don't have
   good numbers but locally it has out performed both Innodb and MyISAM. For
@@ -269,6 +265,9 @@ ha_archive::ha_archive(handlerton *hton, TABLE_SHARE *table_arg)
   archive_reader_open= FALSE;
 }
 
+/* Stack size 50264 with clang */
+PRAGMA_DISABLE_CHECK_STACK_FRAME
+
 static int archive_discover(handlerton *hton, THD* thd, TABLE_SHARE *share)
 {
   DBUG_ENTER("archive_discover");
@@ -310,6 +309,7 @@ ret:
   my_free(frm_ptr);
   DBUG_RETURN(my_errno);
 }
+PRAGMA_REENABLE_CHECK_STACK_FRAME
 
 /**
   @brief Read version 1 meta file (5.0 compatibility routine).
@@ -480,6 +480,10 @@ int ha_archive::read_data_header(azio_stream *file_to_read)
 
   See ha_example.cc for a longer description.
 */
+
+/* Stack size 49608 with clang */
+PRAGMA_DISABLE_CHECK_STACK_FRAME
+
 Archive_share *ha_archive::get_share(const char *table_name, int *rc)
 {
   Archive_share *tmp_share;
@@ -542,6 +546,7 @@ err:
 
   DBUG_RETURN(tmp_share);
 }
+PRAGMA_REENABLE_CHECK_STACK_FRAME
 
 
 int Archive_share::init_archive_writer()
@@ -763,6 +768,9 @@ int ha_archive::frm_compare(azio_stream *s)
   of creation.
 */
 
+/* Stack size 49608 with clang */
+PRAGMA_DISABLE_CHECK_STACK_FRAME
+
 int ha_archive::create(const char *name, TABLE *table_arg,
                        HA_CREATE_INFO *create_info)
 {
@@ -818,7 +826,7 @@ int ha_archive::create(const char *name, TABLE *table_arg,
 #endif /* HAVE_READLINK */
   {
     if (create_info->data_file_name)
-      my_error(WARN_OPTION_IGNORED, MYF(ME_WARNING), "DATA DIRECTORY");
+      my_error(WARN_OPTION_IGNORED, MYF(ME_NOTE), "DATA DIRECTORY");
 
     fn_format(name_buff, name, "", ARZ,
               MY_REPLACE_EXT | MY_UNPACK_FILENAME);
@@ -826,8 +834,8 @@ int ha_archive::create(const char *name, TABLE *table_arg,
   }
 
   /* Archive engine never uses INDEX DIRECTORY. */
-  if (create_info->index_file_name)
-      my_error(WARN_OPTION_IGNORED, MYF(ME_WARNING), "INDEX DIRECTORY");
+  if (create_info->index_file_name && table_arg->s->keys)
+      my_error(WARN_OPTION_IGNORED, MYF(ME_NOTE), "INDEX DIRECTORY");
 
   /*
     There is a chance that the file was "discovered". In this case
@@ -880,6 +888,7 @@ error:
   /* Return error number, if we got one */
   DBUG_RETURN(error ? error : -1);
 }
+PRAGMA_REENABLE_CHECK_STACK_FRAME
 
 /*
   This is where the actual row is written out.
@@ -1001,7 +1010,7 @@ int ha_archive::write_row(const uchar *buf)
     temp_auto= table->next_number_field->val_int();
 
     /*
-      We don't support decremening auto_increment. They make the performance
+      We don't support decrementing auto_increment. They make the performance
       just cry.
     */
     if (temp_auto <= share->archive_write.auto_increment && 
@@ -1544,6 +1553,10 @@ int ha_archive::repair(THD* thd, HA_CHECK_OPT* check_opt)
   The table can become fragmented if data was inserted, read, and then
   inserted again. What we do is open up the file and recompress it completely. 
 */
+
+/* Stack size 50152 with clang */
+PRAGMA_DISABLE_CHECK_STACK_FRAME
+
 int ha_archive::optimize(THD* thd, HA_CHECK_OPT* check_opt)
 {
   int rc= 0;
@@ -1669,6 +1682,7 @@ error:
 
   DBUG_RETURN(rc); 
 }
+PRAGMA_REENABLE_CHECK_STACK_FRAME
 
 /* 
   Below is an example of how to setup row level locking.
@@ -2010,4 +2024,3 @@ maria_declare_plugin(archive)
   MariaDB_PLUGIN_MATURITY_STABLE /* maturity */
 }
 maria_declare_plugin_end;
-

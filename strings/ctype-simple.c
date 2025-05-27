@@ -73,53 +73,70 @@ size_t my_strnxfrmlen_simple(CHARSET_INFO *cs, size_t len)
 */
 
 
-size_t my_strnxfrm_simple_internal(CHARSET_INFO * cs,
-                                   uchar *dst, size_t dstlen, uint *nweights,
-                                   const uchar *src, size_t srclen)
+my_strnxfrm_ret_t
+my_strnxfrm_simple_internal(CHARSET_INFO * cs,
+                            uchar *dst, size_t dstlen, uint *nweights,
+                            const uchar *src, size_t srclen)
 {
   const uchar *map= cs->sort_order;
+  const uchar *src0= src;
   uchar *d0= dst;
   uint frmlen;
+  uint warnings= 0;
   if ((frmlen= (uint)MY_MIN(dstlen, *nweights)) > srclen)
     frmlen= (uint)srclen;
+  if (frmlen < srclen)
+    warnings= MY_STRNXFRM_TRUNCATED_WEIGHT_REAL_CHAR;
+  *nweights-= frmlen;
   if (dst != src)
   {
     const uchar *end;
     for (end= src + frmlen; src < end;)
       *dst++= map[*src++];
+    return my_strnxfrm_ret_construct(dst - d0, src - src0, warnings);
   }
   else
   {
     const uchar *end;
     for (end= dst + frmlen; dst < end; dst++)
       *dst= map[(uchar) *dst];
+    return my_strnxfrm_ret_construct(dst - d0, dst - d0, warnings);
   }
-  *nweights-= frmlen;
-  return dst - d0;
+  return my_strnxfrm_ret_construct(0,0,0); /*Make compiler happy */
 }
 
 
-size_t my_strnxfrm_simple(CHARSET_INFO * cs,
-                          uchar *dst, size_t dstlen, uint nweights,
-                          const uchar *src, size_t srclen, uint flags)
+my_strnxfrm_ret_t my_strnxfrm_simple(CHARSET_INFO * cs,
+                                     uchar *dst, size_t dstlen, uint nweights,
+                                     const uchar *src, size_t srclen,
+                                     uint flags)
 {
-  uchar *d0= dst;
-  dst= d0 + my_strnxfrm_simple_internal(cs, dst, dstlen, &nweights,
-                                        src, srclen);
-  return my_strxfrm_pad_desc_and_reverse(cs, d0, dst, d0 + dstlen,
-                                         nweights, flags, 0);
+  my_strnxfrm_ret_t rc= my_strnxfrm_simple_internal(cs, dst, dstlen, &nweights,
+                                                    src, srclen);
+  my_strnxfrm_ret_t rcpad= my_strxfrm_pad_desc_and_reverse(cs, dst,
+                                                    dst + rc.m_result_length,
+                                                    dst + dstlen,
+                                                    nweights, flags, 0);
+  return my_strnxfrm_ret_construct(rcpad.m_result_length,
+                                   rc.m_source_length_used,
+                                   rc.m_warnings | rcpad.m_warnings);
 }
 
 
-size_t my_strnxfrm_simple_nopad(CHARSET_INFO * cs,
-                                uchar *dst, size_t dstlen, uint nweights,
-                                const uchar *src, size_t srclen, uint flags)
+my_strnxfrm_ret_t
+my_strnxfrm_simple_nopad(CHARSET_INFO * cs,
+                         uchar *dst, size_t dstlen, uint nweights,
+                         const uchar *src, size_t srclen, uint flags)
 {
-  uchar *d0= dst;
-  dst= d0 + my_strnxfrm_simple_internal(cs, dst, dstlen, &nweights,
-                                        src, srclen);
-  return my_strxfrm_pad_desc_and_reverse_nopad(cs, d0, dst, d0 + dstlen,
-                                               nweights, flags, 0);
+  my_strnxfrm_ret_t rc= my_strnxfrm_simple_internal(cs, dst, dstlen, &nweights,
+                                                    src, srclen);
+  my_strnxfrm_ret_t rcpad= my_strxfrm_pad_desc_and_reverse_nopad(cs, dst,
+                                                    dst + rc.m_result_length,
+                                                    dst + dstlen,
+                                                    nweights, flags, 0);
+  return my_strnxfrm_ret_construct(rcpad.m_result_length,
+                                   rc.m_source_length_used,
+                                   rc.m_warnings | rcpad.m_warnings);
 }
 
 
@@ -253,6 +270,7 @@ size_t my_caseup_8bit(CHARSET_INFO * cs, const char *src, size_t srclen,
 {
   const char *end= src + srclen;
   register const uchar *map= cs->to_upper;
+  DBUG_ASSERT(src != NULL); /* Avoid UBSAN nullptr-with-offset */
   DBUG_ASSERT(srclen <= dstlen);
   for ( ; src != end ; src++)
     *dst++= (char) map[(uchar) *src];
@@ -265,6 +283,7 @@ size_t my_casedn_8bit(CHARSET_INFO * cs, const char *src, size_t srclen,
 {
   const char *end= src + srclen;
   register const uchar *map=cs->to_lower;
+  DBUG_ASSERT(src != NULL); /* Avoid UBSAN nullptr-with-offset */
   DBUG_ASSERT(srclen <= dstlen);
   for ( ; src != end ; src++)
     *dst++= (char) map[(uchar) *src];
@@ -346,6 +365,7 @@ void my_hash_sort_simple_nopad(CHARSET_INFO *cs,
   register const uchar *sort_order=cs->sort_order;
   const uchar *end= key + len;
   register ulong m1= *nr1, m2= *nr2;
+  DBUG_ASSERT(key); /* Avoid UBSAN nullptr-with-offset */
   for (; key < (uchar*) end ; key++)
   {
     MY_HASH_ADD(m1, m2, (uint) sort_order[(uint) *key]);
@@ -362,6 +382,7 @@ void my_hash_sort_simple(CHARSET_INFO *cs,
   register const uchar *sort_order=cs->sort_order;
   const uchar *end;
   uint16 space_weight= sort_order[' '];
+  DBUG_ASSERT(key); /* Avoid UBSAN nullptr-with-offset */
 
   /*
     Remove all trailing characters that are equal to space.
@@ -451,7 +472,11 @@ long my_strntol_8bit(CHARSET_INFO *cs,
     else if (c>='A' && c<='Z')
       c = c - 'A' + 10;
     else if (c>='a' && c<='z')
+    {
       c = c - 'a' + 10;
+      if (base > 36)
+        c += 26;
+    }
     else
       break;
     if (c >= base)
@@ -546,7 +571,11 @@ ulong my_strntoul_8bit(CHARSET_INFO *cs,
     else if (c>='A' && c<='Z')
       c = c - 'A' + 10;
     else if (c>='a' && c<='z')
+    {
       c = c - 'a' + 10;
+      if (base > 36)
+        c += 26;
+    }
     else
       break;
     if (c >= base)
@@ -634,7 +663,11 @@ longlong my_strntoll_8bit(CHARSET_INFO *cs __attribute__((unused)),
     else if (c>='A' && c<='Z')
       c = c - 'A' + 10;
     else if (c>='a' && c<='z')
+    {
       c = c - 'a' + 10;
+      if (base > 36)
+        c += 26;
+    }
     else
       break;
     if (c >= base)
@@ -656,8 +689,12 @@ longlong my_strntoll_8bit(CHARSET_INFO *cs __attribute__((unused)),
 
   if (negative)
   {
-    if (i  > (ulonglong) LONGLONG_MIN)
+    if (i >= (ulonglong) LONGLONG_MIN)
+    {
+      if (i == (ulonglong) LONGLONG_MIN)
+        return LONGLONG_MIN;
       overflow = 1;
+    }
   }
   else if (i > (ulonglong) LONGLONG_MAX)
     overflow = 1;
@@ -731,7 +768,11 @@ ulonglong my_strntoull_8bit(CHARSET_INFO *cs,
     else if (c>='A' && c<='Z')
       c = c - 'A' + 10;
     else if (c>='a' && c<='z')
+    {
       c = c - 'a' + 10;
+      if (base > 36)
+        c += 26;
+    }
     else
       break;
     if (c >= base)
@@ -757,7 +798,10 @@ ulonglong my_strntoull_8bit(CHARSET_INFO *cs,
     return (~(ulonglong) 0);
   }
 
-  return (negative ? -((longlong) i) : (longlong) i);
+  /* Avoid undefined behavior - negation of LONGLONG_MIN */
+  return negative && (longlong) i != LONGLONG_MIN ?
+        -((longlong) i) :
+         (longlong) i;
 
 noconv:
   err[0]= EDOM;
@@ -1657,7 +1701,7 @@ my_strntoull10rnd_8bit(CHARSET_INFO *cs __attribute__((unused)),
     ul= ul * 10 + ch;
   }
   
-  if (str >= end) /* Small number without dots and expanents */
+  if (str >= end) /* Small number without dots and exponents */
   {
     *endptr= (char*) str;
     if (negative)
@@ -2032,7 +2076,7 @@ uint my_strxfrm_flag_normalize(CHARSET_INFO *cs, uint flags)
     reverse order for that level, that is, starting with
     the last character and ending with the first character.
     
-    If nether DESC nor REVERSE flags are give,
+    If neither DESC nor REVERSE flags are give,
     the string is not changed.
     
 */
@@ -2069,16 +2113,23 @@ my_strxfrm_desc_and_reverse(uchar *str, uchar *strend,
 }
 
 
-size_t
+my_strnxfrm_ret_t
 my_strxfrm_pad_desc_and_reverse(CHARSET_INFO *cs,
                                 uchar *str, uchar *frmend, uchar *strend,
                                 uint nweights, uint flags, uint level)
 {
-  if (nweights && frmend < strend && (flags & MY_STRXFRM_PAD_WITH_SPACE))
+  uint warnings= 0;
+  if (nweights && (flags & MY_STRXFRM_PAD_WITH_SPACE))
   {
-    uint fill_length= MY_MIN((uint) (strend - frmend), nweights * cs->mbminlen);
-    my_ci_fill(cs, (char*) frmend, fill_length, cs->pad_char);
-    frmend+= fill_length;
+    uint fill_length_expected= nweights * cs->mbminlen; 
+    uint fill_length= MY_MIN((uint) (strend - frmend), fill_length_expected);
+    if (fill_length)
+    {
+      my_ci_fill(cs, (char*) frmend, fill_length, cs->pad_char);
+      frmend+= fill_length;
+    }
+    if (fill_length < fill_length_expected)
+      warnings= MY_STRNXFRM_TRUNCATED_WEIGHT_TRAILING_SPACE;
   }
   my_strxfrm_desc_and_reverse(str, frmend, flags, level);
   if ((flags & MY_STRXFRM_PAD_TO_MAXLEN) && frmend < strend)
@@ -2087,20 +2138,27 @@ my_strxfrm_pad_desc_and_reverse(CHARSET_INFO *cs,
     my_ci_fill(cs, (char*) frmend, fill_length, cs->pad_char);
     frmend= strend;
   }
-  return frmend - str;
+  return my_strnxfrm_ret_construct(frmend - str, 0, warnings);
 }
 
 
-size_t
+my_strnxfrm_ret_t
 my_strxfrm_pad_desc_and_reverse_nopad(CHARSET_INFO *cs,
                                       uchar *str, uchar *frmend, uchar *strend,
                                       uint nweights, uint flags, uint level)
 {
-  if (nweights && frmend < strend && (flags & MY_STRXFRM_PAD_WITH_SPACE))
+  uint warnings= 0;
+  if (nweights && (flags & MY_STRXFRM_PAD_WITH_SPACE))
   {
-    uint fill_length= MY_MIN((uint) (strend - frmend), nweights * cs->mbminlen);
-    memset(frmend, 0x00, fill_length);
-    frmend+= fill_length;
+    uint fill_length_expected= nweights * cs->mbminlen;
+    uint fill_length= MY_MIN((uint) (strend - frmend), fill_length_expected);
+    if (fill_length)
+    {
+      memset(frmend, 0x00, fill_length);
+      frmend+= fill_length;
+    }
+    if (fill_length < fill_length_expected)
+      warnings= MY_STRNXFRM_TRUNCATED_WEIGHT_TRAILING_SPACE;
   }
   my_strxfrm_desc_and_reverse(str, frmend, flags, level);
   if ((flags & MY_STRXFRM_PAD_TO_MAXLEN) && frmend < strend)
@@ -2109,7 +2167,7 @@ my_strxfrm_pad_desc_and_reverse_nopad(CHARSET_INFO *cs,
     memset(frmend, 0x00, fill_length);
     frmend= strend;
   }
-  return frmend - str;
+  return my_strnxfrm_ret_construct(frmend - str, 0, warnings);
 }
 
 
@@ -2123,8 +2181,6 @@ MY_CHARSET_HANDLER my_charset_8bit_handler=
     my_mb_wc_8bit,
     my_wc_mb_8bit,
     my_mb_ctype_8bit,
-    my_caseup_str_8bit,
-    my_casedn_str_8bit,
     my_caseup_8bit,
     my_casedn_8bit,
     my_snprintf_8bit,
@@ -2158,7 +2214,6 @@ MY_COLLATION_HANDLER my_collation_8bit_simple_ci_handler =
     my_strnxfrmlen_simple,
     my_like_range_simple,
     my_wildcmp_8bit,
-    my_strcasecmp_8bit,
     my_instr_simple,
     my_hash_sort_simple,
     my_propagate_simple,
@@ -2179,7 +2234,6 @@ MY_COLLATION_HANDLER my_collation_8bit_simple_nopad_ci_handler =
     my_strnxfrmlen_simple,
     my_like_range_simple,
     my_wildcmp_8bit,
-    my_strcasecmp_8bit,
     my_instr_simple,
     my_hash_sort_simple_nopad,
     my_propagate_simple,

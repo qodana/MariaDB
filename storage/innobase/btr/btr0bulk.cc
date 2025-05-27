@@ -51,6 +51,7 @@ PageBulk::init()
 
 	if (m_page_no == FIL_NULL) {
 		mtr_t	alloc_mtr;
+		dberr_t err= DB_SUCCESS;
 
 		/* We commit redo log for allocation by a separate mtr,
 		because we don't guarantee pages are committed following
@@ -59,27 +60,14 @@ PageBulk::init()
 		alloc_mtr.start();
 		m_index->set_modified(alloc_mtr);
 
-		uint32_t n_reserved;
-		dberr_t err = fsp_reserve_free_extents(
-			&n_reserved, m_index->table->space, 1, FSP_NORMAL,
-			&alloc_mtr);
-		if (UNIV_UNLIKELY(err != DB_SUCCESS)) {
-oom:
-			alloc_mtr.commit();
-			m_mtr.commit();
-			return err;
-		}
-
 		/* Allocate a new page. */
 		new_block = btr_page_alloc(m_index, 0, FSP_UP, m_level,
 					   &alloc_mtr, &m_mtr, &err);
-		if (!new_block) {
-			goto oom;
-		}
-
-		m_index->table->space->release_free_extents(n_reserved);
-
 		alloc_mtr.commit();
+		if (!new_block) {
+			m_mtr.commit();
+			return err;
+		}
 
 		new_page = buf_block_get_frame(new_block);
 		m_page_no = new_block->page.id().page_no();
@@ -169,7 +157,8 @@ inline void PageBulk::insertPage(rec_t *rec, rec_offs *offsets)
   const ulint rec_size= rec_offs_size(offsets);
   const ulint extra_size= rec_offs_extra_size(offsets);
   ut_ad(page_align(m_heap_top + rec_size) == m_page);
-  ut_d(const bool is_leaf= page_rec_is_leaf(m_cur_rec));
+  ut_ad(page_align(m_cur_rec) == m_page);
+  ut_d(const bool is_leaf= page_is_leaf(m_page));
 
 #ifdef UNIV_DEBUG
   /* Check whether records are in order. */
@@ -191,8 +180,8 @@ inline void PageBulk::insertPage(rec_t *rec, rec_offs *offsets)
   /* Insert the record in the linked list. */
   if (fmt != REDUNDANT)
   {
-    const rec_t *next_rec= m_page +
-      page_offset(m_cur_rec + mach_read_from_2(m_cur_rec - REC_NEXT));
+    const rec_t *next_rec=
+      m_cur_rec + int16_t(mach_read_from_2(m_cur_rec - REC_NEXT));
     if (fmt != COMPRESSED)
       m_mtr.write<2>(*m_block, m_cur_rec - REC_NEXT,
                      static_cast<uint16_t>(insert_rec - m_cur_rec));
@@ -215,7 +204,8 @@ inline void PageBulk::insertPage(rec_t *rec, rec_offs *offsets)
   else
   {
     memcpy(const_cast<rec_t*>(rec) - REC_NEXT, m_cur_rec - REC_NEXT, 2);
-    m_mtr.write<2>(*m_block, m_cur_rec - REC_NEXT, page_offset(insert_rec));
+    m_mtr.write<2>(*m_block, m_cur_rec - REC_NEXT,
+                   uintptr_t(insert_rec - m_page));
     rec_set_bit_field_1(const_cast<rec_t*>(rec), 0,
                         REC_OLD_N_OWNED, REC_N_OWNED_MASK, REC_N_OWNED_SHIFT);
     rec_set_bit_field_2(const_cast<rec_t*>(rec),
@@ -225,7 +215,7 @@ inline void PageBulk::insertPage(rec_t *rec, rec_offs *offsets)
 
   if (fmt == COMPRESSED)
     /* We already wrote the record. Log is written in PageBulk::compress(). */;
-  else if (page_offset(m_cur_rec) ==
+  else if (m_cur_rec - m_page ==
            (fmt == REDUNDANT ? PAGE_OLD_INFIMUM : PAGE_NEW_INFIMUM))
     m_mtr.memcpy(*m_block, m_heap_top, rec - extra_size, rec_size);
   else
@@ -257,7 +247,7 @@ inline void PageBulk::insertPage(rec_t *rec, rec_offs *offsets)
       if (len > 2)
       {
         memcpy(b, c, len);
-        m_mtr.memmove(*m_block, page_offset(b), page_offset(c), len);
+        m_mtr.memmove(*m_block, b - m_page, c - m_page, len);
         c= cm;
         b= bm;
         r= rm;
@@ -296,7 +286,7 @@ no_data:
         {
           m_mtr.memcpy<mtr_t::FORCED>(*m_block, b, r, m_cur_rec - c);
           memcpy(bd, cd, len);
-          m_mtr.memmove(*m_block, page_offset(bd), page_offset(cd), len);
+          m_mtr.memmove(*m_block, bd - m_page, cd - m_page, len);
           c= cdm;
           b= rdm - rd + bd;
           r= rdm;
@@ -441,7 +431,7 @@ inline void PageBulk::finishPage()
       if (count == (PAGE_DIR_SLOT_MAX_N_OWNED + 1) / 2)
       {
         slot-= PAGE_DIR_SLOT_SIZE;
-        mach_write_to_2(slot, page_offset(insert_rec));
+        mach_write_to_2(slot, insert_rec - m_page);
         page_rec_set_n_owned<false>(m_block, insert_rec, count, false, &m_mtr);
         count= 0;
       }
@@ -480,7 +470,7 @@ inline void PageBulk::finishPage()
     m_mtr.memcpy(*m_block, PAGE_HEADER + m_page, page_header,
                  sizeof page_header);
     m_mtr.write<2>(*m_block, PAGE_HEADER + PAGE_N_RECS + m_page, m_rec_no);
-    m_mtr.memcpy(*m_block, page_offset(slot), slot0 - slot);
+    m_mtr.memcpy(*m_block, slot - m_page, slot0 - slot);
   }
   else
   {
@@ -709,7 +699,7 @@ PageBulk::copyOut(
 					    ULINT_UNDEFINED, &m_heap);
 	mach_write_to_2(rec - REC_NEXT, m_is_comp
 			? static_cast<uint16_t>
-			(PAGE_NEW_SUPREMUM - page_offset(rec))
+			(PAGE_NEW_SUPREMUM - (rec - m_page))
 			: PAGE_OLD_SUPREMUM);
 
 	/* Set related members */
@@ -845,7 +835,7 @@ PageBulk::release()
 	m_block->page.fix();
 
 	/* No other threads can modify this block. */
-	m_modify_clock = buf_block_get_modify_clock(m_block);
+	m_modify_clock = m_block->modify_clock;
 
 	m_mtr.commit();
 }
@@ -965,10 +955,10 @@ BtrBulk::pageCommit(
 /** Log free check */
 inline void BtrBulk::logFreeCheck()
 {
-	if (log_sys.check_flush_or_checkpoint()) {
+	if (log_sys.check_for_checkpoint()) {
 		release();
 
-		log_check_margins();
+		log_free_check();
 
 		latch();
 	}

@@ -22,8 +22,34 @@
 #include "json_schema_helper.h"
 
 static bool get_current_value(json_engine_t *, const uchar *&, size_t &);
-static int check_overlaps(json_engine_t *, json_engine_t *, bool);
+static bool check_overlaps(json_engine_t *, json_engine_t *, bool);
 static int json_find_overlap_with_object(json_engine_t *, json_engine_t *, bool);
+
+#ifndef DBUG_OFF
+static int dbug_json_check_min_stack_requirement()
+{
+  my_error(ER_STACK_OVERRUN_NEED_MORE, MYF(ME_FATAL),
+           my_thread_stack_size, my_thread_stack_size, STACK_MIN_SIZE);
+  return 1;
+}
+#endif
+
+extern void pause_execution(THD *thd, double timeout);
+
+/*
+  Allocating memory and *also* using it (reading and
+  writing from it) because some build instructions cause
+  compiler to optimize out stack_used_up. Since alloca()
+  here depends on stack_used_up, it doesnt get executed
+  correctly and causes json_debug_nonembedded to fail
+  ( --error ER_STACK_OVERRUN_NEED_MORE does not occur).
+*/
+
+#define JSON_DO_PAUSE_EXECUTION(A, B) do \
+                                 { \
+                                  DBUG_EXECUTE_IF("json_pause_execution", \
+                                  { pause_execution(A, B); }); \
+                                 } while(0)
 
 /*
   Compare ASCII string against the string with the specified
@@ -75,7 +101,7 @@ static inline bool append_simple(String *s, const uchar *a, size_t a_len)
   Appends JSON string to the String object taking charsets in
   consideration.
 */
-static int st_append_json(String *s,
+int st_append_json(String *s,
              CHARSET_INFO *json_cs, const uchar *js, uint js_len)
 {
   int str_len= js_len * s->charset()->mbmaxlen;
@@ -142,11 +168,8 @@ int json_path_parts_compare(
   const json_path_step_t *temp_b= b;
 
   DBUG_EXECUTE_IF("json_check_min_stack_requirement",
-                  {
-                    long arbitrary_var;
-                    long stack_used_up= (available_stack_size(current_thd->thread_stack, &arbitrary_var));
-                    ALLOCATE_MEM_ON_STACK(my_thread_stack_size-stack_used_up-STACK_MIN_SIZE);
-                  });
+                  return dbug_json_check_min_stack_requirement(););
+
   if (check_stack_overrun(current_thd, STACK_MIN_SIZE , NULL))
     return 1;
 
@@ -550,7 +573,7 @@ static int path_setup_nwc(json_path_t *p, CHARSET_INFO *i_cs,
 }
 
 
-longlong Item_func_json_valid::val_int()
+bool Item_func_json_valid::val_bool()
 {
   String *js= args[0]->val_json(&tmp_value);
 
@@ -570,7 +593,7 @@ bool Item_func_json_equals::fix_length_and_dec(THD *thd)
 }
 
 
-longlong Item_func_json_equals::val_int()
+bool Item_func_json_equals::val_bool()
 {
   longlong result= 0;
 
@@ -631,7 +654,7 @@ bool Item_func_json_exists::fix_length_and_dec(THD *thd)
 }
 
 
-longlong Item_func_json_exists::val_int()
+bool Item_func_json_exists::val_bool()
 {
   json_engine_t je;
   int array_counters[JSON_DEPTH_LIMIT];
@@ -842,8 +865,8 @@ String *Item_func_json_quote::val_str(String *str)
 bool Item_func_json_unquote::fix_length_and_dec(THD *thd)
 {
   collation.set(&my_charset_utf8mb3_general_ci,
-                DERIVATION_COERCIBLE, MY_REPERTOIRE_ASCII);
-  max_length= args[0]->max_length;
+                DERIVATION_CAST, MY_REPERTOIRE_ASCII);
+  max_length= args[0]->max_char_length() * collation.collation->mbmaxlen;
   set_maybe_null();
   return FALSE;
 }
@@ -909,7 +932,7 @@ static int alloc_tmp_paths(THD *thd, uint n_paths,
   {
     if (*tmp_paths == 0)
     {
-      MEM_ROOT *root= thd->stmt_arena->mem_root;
+      MEM_ROOT *root= thd->active_stmt_arena_to_use()->mem_root;
 
       *paths= (json_path_with_flags *) alloc_root(root,
           sizeof(json_path_with_flags) * n_paths);
@@ -941,21 +964,47 @@ static void mark_constant_paths(json_path_with_flags *p,
 }
 
 
-bool Item_json_str_multipath::fix_fields(THD *thd, Item **ref)
-{
-  return alloc_tmp_paths(thd, get_n_paths(), &paths, &tmp_paths) ||
-         Item_str_func::fix_fields(thd, ref);
-}
-
-
-void Item_json_str_multipath::cleanup()
+Item_json_str_multipath::~Item_json_str_multipath()
 {
   if (tmp_paths)
   {
-    for (uint i= get_n_paths(); i>0; i--)
+    for (uint i= n_paths; i>0; i--)
       tmp_paths[i-1].free();
   }
-  Item_str_func::cleanup();
+}
+
+
+bool Item_json_str_multipath::fix_fields(THD *thd, Item **ref)
+{
+  if (!tmp_paths)
+  {
+    /*
+      Remember the number of paths and allocate required memory on first time
+      the method fix_fields() is invoked. For prepared statements the method
+      fix_fields can be called several times for the same item because its
+      clean up is performed every item a prepared statement finishing its
+      execution. In result, the data member fixed is reset and the method
+      fix_field() is invoked on next time the same prepared statement be
+      executed. On the other side, any memory allocations on behalf of
+      the prepared statement must be performed only once on its first execution.
+      The data member tmp_path is kind a guard to do these activities only once
+      on first time the method fix_field() is called.
+    */
+    n_paths= get_n_paths();
+
+    if (alloc_tmp_paths(thd, n_paths, &paths, &tmp_paths))
+      return true;
+  }
+
+#ifdef PROTECT_STATEMENT_MEMROOT
+  /*
+   Check that the number of paths remembered on first run of a statement
+   never changed later.
+  */
+  DBUG_ASSERT(n_paths == get_n_paths());
+#endif
+
+  return Item_str_func::fix_fields(thd, ref);
 }
 
 
@@ -970,16 +1019,17 @@ bool Item_func_json_extract::fix_length_and_dec(THD *thd)
 }
 
 
-static bool path_exact(const json_path_with_flags *paths_list, int n_paths,
+static int path_exact(const json_path_with_flags *paths_list, int n_paths,
                        const json_path_t *p, json_value_types vt,
                        const int *array_size_counter)
 {
+  int count_path= 0;
   for (; n_paths > 0; n_paths--, paths_list++)
   {
     if (json_path_compare(&paths_list->p, p, vt, array_size_counter) == 0)
-      return TRUE;
+      count_path++;
   }
-  return FALSE;
+  return count_path;
 }
 
 
@@ -1004,7 +1054,7 @@ String *Item_func_json_extract::read_json(String *str,
   json_engine_t je, sav_je;
   json_path_t p;
   const uchar *value;
-  int not_first_value= 0;
+  int not_first_value= 0, count_path= 0;
   uint n_arg;
   size_t v_len;
   int possible_multiple_values;
@@ -1063,7 +1113,8 @@ String *Item_func_json_extract::read_json(String *str,
                                   array_size_counter + (p.last_step - p.steps)))
       goto error;
 
-    if (!path_exact(paths, arg_count-1, &p, je.value_type, array_size_counter))
+    if (!(count_path= path_exact(paths, arg_count-1, &p, je.value_type,
+                                 array_size_counter)))
       continue;
 
     value= je.value_begin;
@@ -1093,9 +1144,19 @@ String *Item_func_json_extract::read_json(String *str,
         je= sav_je;
     }
 
-    if ((not_first_value && str->append(", ", 2)) ||
-        str->append((const char *) value, v_len))
-      goto error; /* Out of memory. */
+    if ((not_first_value && str->append(", ", 2)))
+      goto error;
+    while(count_path)
+    {
+      if (str->append((const char *) value, v_len))
+        goto error;
+      count_path--;
+      if (count_path)
+      {
+        if (str->append(", ", 2))
+          goto error;
+      }
+    }
 
     not_first_value= 1;
 
@@ -1278,11 +1339,7 @@ static int check_contains(json_engine_t *js, json_engine_t *value)
   json_engine_t loc_js;
   bool set_js;
   DBUG_EXECUTE_IF("json_check_min_stack_requirement",
-                  {
-                    long arbitrary_var;
-                    long stack_used_up= (available_stack_size(current_thd->thread_stack, &arbitrary_var));
-                    ALLOCATE_MEM_ON_STACK(my_thread_stack_size-stack_used_up-STACK_MIN_SIZE);
-                  });
+                  return dbug_json_check_min_stack_requirement(););
   if (check_stack_overrun(current_thd, STACK_MIN_SIZE , NULL))
     return 1;
 
@@ -1416,7 +1473,7 @@ static int check_contains(json_engine_t *js, json_engine_t *value)
 }
 
 
-longlong Item_func_json_contains::val_int()
+bool Item_func_json_contains::val_bool()
 {
   String *js= args[0]->val_json(&tmp_js);
   json_engine_t je, ve;
@@ -1496,10 +1553,19 @@ return_null:
 
 bool Item_func_json_contains_path::fix_fields(THD *thd, Item **ref)
 {
-  return alloc_tmp_paths(thd, arg_count-2, &paths, &tmp_paths) ||
-         (p_found= (bool *) alloc_root(thd->mem_root,
-                                       (arg_count-2)*sizeof(bool))) == NULL ||
-         Item_int_func::fix_fields(thd, ref);
+  /*
+    See comments on Item_json_str_multipath::fix_fields regarding
+    the aim of the condition 'if (!tmp_paths)'.
+  */
+  if (!tmp_paths)
+  {
+    if (alloc_tmp_paths(thd, arg_count-2, &paths, &tmp_paths) ||
+        (p_found= (bool *) alloc_root(thd->active_stmt_arena_to_use()->mem_root,
+                                       (arg_count-2)*sizeof(bool))) == NULL)
+      return true;
+  }
+
+  return Item_int_func::fix_fields(thd, ref);
 }
 
 
@@ -1512,8 +1578,7 @@ bool Item_func_json_contains_path::fix_length_and_dec(THD *thd)
   return Item_bool_func::fix_length_and_dec(thd);
 }
 
-
-void Item_func_json_contains_path::cleanup()
+Item_func_json_contains_path::~Item_func_json_contains_path()
 {
   if (tmp_paths)
   {
@@ -1521,7 +1586,6 @@ void Item_func_json_contains_path::cleanup()
       tmp_paths[i-1].free();
     tmp_paths= 0;
   }
-  Item_int_func::cleanup();
 }
 
 
@@ -1627,7 +1691,7 @@ return_null:
 }
 #endif /*DUMMY*/
 
-longlong Item_func_json_contains_path::val_int()
+bool Item_func_json_contains_path::val_bool()
 {
   String *js= args[0]->val_json(&tmp_js);
   json_engine_t je;
@@ -1729,7 +1793,7 @@ null_return:
   Item_func_conv_charset::is_json_type() which returned args[0]->is_json_type().
   JSON functions with multiple string input with different character sets
   wrap some arguments into Item_func_conv_charset. So the former
-  Item_func_conv_charset::is_json_type() took the JSON propery from args[0],
+  Item_func_conv_charset::is_json_type() took the JSON properly from args[0],
   i.e. from the original argument before the conversion.
   This is probably not always correct because an *explicit*
   `CONVERT(arg USING charset)` is actually a general purpose string
@@ -1877,7 +1941,23 @@ bool Item_func_json_array::fix_length_and_dec(THD *thd)
     return TRUE;
 
   for (n_arg=0 ; n_arg < arg_count ; n_arg++)
-    char_length+= static_cast<ulonglong>(args[n_arg]->max_char_length()) + 4;
+  {
+    ulonglong arg_length;
+    Item *arg= args[n_arg];
+
+    if (arg->result_type() == STRING_RESULT &&
+        !Type_handler_json_common::is_json_type_handler(arg->type_handler()))
+      arg_length= arg->max_char_length() * 2; /*escaping possible */
+    else if (arg->type_handler()->is_bool_type())
+      arg_length= 5;
+    else
+      arg_length= arg->max_char_length();
+
+    if (arg_length < 4)
+      arg_length= 4; /* can be 'null' */
+
+    char_length+= arg_length + 4;
+  }
 
   fix_char_length_ulonglong(char_length);
   tmp_val.set_charset(collation.collation);
@@ -1927,6 +2007,8 @@ err_return:
 
 bool Item_func_json_array_append::fix_length_and_dec(THD *thd)
 {
+  JSON_DO_PAUSE_EXECUTION(thd, 0.0002);
+
   uint n_arg;
   ulonglong char_length;
 
@@ -2081,9 +2163,11 @@ return_null:
 String *Item_func_json_array_insert::val_str(String *str)
 {
   json_engine_t je;
-  String *js= args[0]->val_json(&tmp_js);
+  String *js= args[0]->val_str(&tmp_js);
   uint n_arg, n_path;
   THD *thd= current_thd;
+
+  JSON_DO_PAUSE_EXECUTION(thd, 0.0002);
 
   DBUG_ASSERT(fixed());
 
@@ -2274,13 +2358,8 @@ err_return:
 
 static int do_merge(String *str, json_engine_t *je1, json_engine_t *je2)
 {
-
   DBUG_EXECUTE_IF("json_check_min_stack_requirement",
-                  {
-                    long arbitrary_var;
-                    long stack_used_up= (available_stack_size(current_thd->thread_stack, &arbitrary_var));
-                    ALLOCATE_MEM_ON_STACK(my_thread_stack_size-stack_used_up-STACK_MIN_SIZE);
-                  });
+                  return dbug_json_check_min_stack_requirement(););
   if (check_stack_overrun(current_thd, STACK_MIN_SIZE , NULL))
     return 1;
 
@@ -2495,6 +2574,8 @@ String *Item_func_json_merge::val_str(String *str)
   THD *thd= current_thd;
   LINT_INIT(js2);
 
+  JSON_DO_PAUSE_EXECUTION(thd, 0.0002);
+
   if (args[0]->null_value)
     goto null_return;
 
@@ -2619,11 +2700,7 @@ static int do_merge_patch(String *str, json_engine_t *je1, json_engine_t *je2,
                           bool *empty_result)
 {
   DBUG_EXECUTE_IF("json_check_min_stack_requirement",
-                  {
-                    long arbitrary_var;
-                    long stack_used_up= (available_stack_size(current_thd->thread_stack, &arbitrary_var));
-                    ALLOCATE_MEM_ON_STACK(my_thread_stack_size-stack_used_up-STACK_MIN_SIZE);
-                  });
+                  return dbug_json_check_min_stack_requirement(););
   if (check_stack_overrun(current_thd, STACK_MIN_SIZE , NULL))
     return 1;
 
@@ -2807,6 +2884,8 @@ String *Item_func_json_merge_patch::val_str(String *str)
   uint n_arg;
   bool empty_result, merge_to_null;
   THD *thd= current_thd;
+
+  JSON_DO_PAUSE_EXECUTION(thd, 0.0002);
 
   /* To report errors properly if some JSON is invalid. */
   je1.s.error= je2.s.error= 0;
@@ -3085,6 +3164,12 @@ String *Item_func_json_type::val_str(String *str)
     break;
   }
 
+  /* ensure the json is at least valid. */
+  while(json_scan_next(&je) == 0) {}
+
+  if (je.s.error)
+    goto error;
+
   str->set(type, strlen(type), &my_charset_utf8mb3_general_ci);
   return str;
 
@@ -3100,14 +3185,20 @@ bool Item_func_json_insert::fix_length_and_dec(THD *thd)
   uint n_arg;
   ulonglong char_length;
 
+  JSON_DO_PAUSE_EXECUTION(thd, 0.0002);
+
   collation.set(args[0]->collation);
   char_length= args[0]->max_char_length();
 
   for (n_arg= 1; n_arg < arg_count; n_arg+= 2)
   {
     paths[n_arg/2].set_constant_flag(args[n_arg]->const_item());
-    char_length+=
-        static_cast<ulonglong>(args[n_arg+1]->max_char_length()) + 4;
+    /*
+      In the resulting JSON we can insert the property
+      name from the path, and the value itself.
+    */
+    char_length+= args[n_arg/2]->max_char_length() + 6;
+    char_length+= args[n_arg/2+1]->max_char_length() + 4;
   }
 
   fix_char_length_ulonglong(char_length);
@@ -3390,6 +3481,8 @@ String *Item_func_json_remove::val_str(String *str)
 
   DBUG_ASSERT(fixed());
 
+  JSON_DO_PAUSE_EXECUTION(thd, 0.0002);
+
   if (args[0]->null_value)
     goto null_return;
 
@@ -3441,6 +3534,7 @@ String *Item_func_json_remove::val_str(String *str)
     {
       if (je.s.error)
         goto js_error;
+      continue;
     }
 
     if (json_read_value(&je))
@@ -3952,7 +4046,20 @@ bool Item_func_json_format::fix_length_and_dec(THD *thd)
 {
   decimals= 0;
   collation.set(args[0]->collation);
-  max_length= args[0]->max_length;
+  switch (fmt)
+  {
+  case COMPACT:
+    max_length= args[0]->max_length;
+    break;
+  case LOOSE:
+    max_length= args[0]->max_length * 2;
+    break;
+  case DETAILED:
+    max_length= MAX_BLOB_WIDTH;
+    break;
+  default:
+    DBUG_ASSERT(0);
+  };
   set_maybe_null();
   return FALSE;
 }
@@ -4084,6 +4191,13 @@ int Arg_comparator::compare_e_json_str_basic(Item *j, Item *s)
   }
 
   return MY_TEST(sortcmp(res1, res2, compare_collation()) == 0);
+}
+
+bool Item_func_json_arrayagg::fix_fields(THD *thd, Item **ref)
+{
+  bool res= Item_func_group_concat::fix_fields(thd, ref);
+  m_tmp_json.set_charset(collation.collation);
+  return res;
 }
 
 
@@ -4647,7 +4761,7 @@ static int json_find_overlap_with_object(json_engine_t *js, json_engine_t *value
            else return false.
       2.c) If either of json document or value is array and other is object:
            Iterate over the array, if an element of type object is found,
-           then compare it with the object (which is the other arguemnt).
+           then compare it with the object (which is the other argument).
            If the entire object matches i.e all they key value pairs match,
            then return true else return false.
 
@@ -4662,14 +4776,10 @@ static int json_find_overlap_with_object(json_engine_t *js, json_engine_t *value
     FALSE - If two json documents do not overlap
     TRUE  - if two json documents overlap
 */
-static int check_overlaps(json_engine_t *js, json_engine_t *value, bool compare_whole)
+static bool check_overlaps(json_engine_t *js, json_engine_t *value, bool compare_whole)
 {
   DBUG_EXECUTE_IF("json_check_min_stack_requirement",
-                  {
-                    long arbitrary_var;
-                    long stack_used_up= (available_stack_size(current_thd->thread_stack, &arbitrary_var));
-                    ALLOCATE_MEM_ON_STACK(my_thread_stack_size-stack_used_up-STACK_MIN_SIZE);
-                  });
+                  return dbug_json_check_min_stack_requirement(););
   if (check_stack_overrun(current_thd, STACK_MIN_SIZE , NULL))
     return 1;
 
@@ -4684,7 +4794,7 @@ static int check_overlaps(json_engine_t *js, json_engine_t *value, bool compare_
   }
 }
 
-longlong Item_func_json_overlaps::val_int()
+bool Item_func_json_overlaps::val_bool()
 {
   String *js= args[0]->val_json(&tmp_js);
   json_engine_t je, ve;
@@ -4737,7 +4847,7 @@ bool Item_func_json_overlaps::fix_length_and_dec(THD *thd)
   return Item_bool_func::fix_length_and_dec(thd);
 }
 
-longlong Item_func_json_schema_valid::val_int()
+bool Item_func_json_schema_valid::val_bool()
 {
   json_engine_t ve;
   int is_valid= 1;
@@ -4812,11 +4922,21 @@ If any of them fails, return false, else return true.
 bool Item_func_json_schema_valid::fix_length_and_dec(THD *thd)
 {
   json_engine_t je;
-  bool res= 0;
+  bool res= 0, is_schema_constant= args[0]->const_item();
 
-  String *js= args[0]->val_json(&tmp_js);
+  String *js= NULL;
 
-  if ((null_value= args[0]->null_value))
+  if (!is_schema_constant)
+  {
+
+    my_error(ER_JSON_NO_VARIABLE_SCHEMA, MYF(0));
+    null_value= 1;
+    return 0;
+  }
+  null_value= args[0]->null_value;
+  js= args[0]->val_json(&tmp_js);
+
+  if (!js)
   {
     null_value= 1;
     return 0;
@@ -4995,7 +5115,7 @@ static bool create_hash(json_engine_t *value, HASH *items, bool &hash_inited,
 {
   int level= value->stack_p;
   if (my_hash_init(PSI_INSTRUMENT_ME, items, value->s.cs, 0, 0, 0,
-                   (my_hash_get_key) get_key_name, NULL, 0))
+                   get_key_name, NULL, 0))
     return true;
   hash_inited= true;
 
@@ -5071,7 +5191,7 @@ static bool get_current_value(json_engine_t *js, const uchar *&value_start,
   If the outermost layer of JSON is an array,
   the intersection of arrays is independent of order.
   Create a hash containing all elements in the array,
-  itterate over another array and add the common elements
+  iterate over another array and add the common elements
   to the result.
 
   RETURN
@@ -5155,8 +5275,21 @@ String* Item_func_json_array_intersect::val_str(String *str)
 {
   DBUG_ASSERT(fixed());
 
-  json_engine_t je2, res_je;
-  String *js2= args[1]->val_json(&tmp_js2);
+  json_engine_t je2, res_je, je1;
+  String *js2= args[1]->val_json(&tmp_js2), *js1= args[0]->val_json(&tmp_js1);
+
+  if (parse_for_each_row)
+  {
+    if (args[0]->null_value)
+      goto null_return;
+    if (hash_inited)
+      my_hash_free(&items);
+    if (root_inited)
+      free_root(&hash_root, MYF(0));
+    root_inited= false;
+    hash_inited= false;
+    prepare_json_and_create_hash(&je1, js1);
+  }
 
   if (null_value || args[1]->null_value)
     goto null_return;
@@ -5197,18 +5330,10 @@ null_return:
   return NULL;
 }
 
-bool Item_func_json_array_intersect::fix_length_and_dec(THD *thd)
+void Item_func_json_array_intersect::prepare_json_and_create_hash(json_engine_t *je1, String *js)
 {
-  json_engine_t je1;
-  String *js1= args[0]->val_json(&tmp_js1);
-
-  if (args[0]->null_value)
-  {
-    null_value= true;
-    return FALSE;
-  }
-  json_scan_start(&je1, js1->charset(), (const uchar *) js1->ptr(),
-                  (const uchar *) js1->ptr() + js1->length());
+  json_scan_start(je1, js->charset(), (const uchar *) js->ptr(),
+                  (const uchar *) js->ptr() + js->length());
   /*
     Scan value uses the hash table to get the intersection of two arrays.
   */
@@ -5217,18 +5342,40 @@ bool Item_func_json_array_intersect::fix_length_and_dec(THD *thd)
     init_alloc_root(PSI_NOT_INSTRUMENTED, &hash_root, 1024, 0, MYF(0));
   root_inited= true;
 
-  if (json_read_value(&je1) || je1.value_type != JSON_VALUE_ARRAY ||
-      create_hash(&je1, &items, hash_inited, &hash_root))
+  if (json_read_value(je1) || je1->value_type != JSON_VALUE_ARRAY ||
+      create_hash(je1, &items, hash_inited, &hash_root))
+    {
+      if (je1->s.error)
+        report_json_error(js, je1, 0);
+      null_value= 1;
+    }
+
+    max_length= (args[0]->max_length < args[1]->max_length) ?
+                 args[0]->max_length : args[1]->max_length;
+}
+
+bool Item_func_json_array_intersect::fix_length_and_dec(THD *thd)
+{
+  json_engine_t je1;
+  String *js1;
+
+  if (!args[0]->const_item())
   {
-    if (je1.s.error)
-      report_json_error(js1, &je1, 0);
-    null_value= 1;
-    return FALSE;
+    if (args[1]->const_item())
+    {
+      std::swap(args[0], args[1]);
+    }
+    else
+    {
+      parse_for_each_row= true;
+      goto end;
+    }
   }
 
-  max_length= (args[0]->max_length < args[1]->max_length) ?
-               args[0]->max_length : args[1]->max_length;
+  js1= args[0]->val_json(&tmp_js1);
+  prepare_json_and_create_hash(&je1, js1);
 
+end:
   set_maybe_null();
   return FALSE;
 }
@@ -5271,7 +5418,7 @@ static bool filter_keys(json_engine_t *je1, String *str, HASH items)
         str.append('"');
         str.append('\0');
 
-        char *curr_key= (char*)malloc((size_t)(key_end-key_start+3));
+        char *curr_key= (char*)malloc((size_t)(str.length()+3));
         strncpy(curr_key, str.ptr(), str.length());
 
         if (my_hash_search(&items, (const uchar*)curr_key, strlen(curr_key)))

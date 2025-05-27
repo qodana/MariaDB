@@ -5,6 +5,7 @@ CREATE DATABASE federated;
 connection slave;
 CREATE DATABASE federated;
 connection default;
+ALTER DATABASE federated CHARACTER SET latin1;
 set global federated_pushdown=1;
 connection slave;
 DROP TABLE IF EXISTS federated.t1;
@@ -253,6 +254,7 @@ ANALYZE
           "r_other_time_ms": "REPLACED",
           "r_engine_stats": REPLACED,
           "filtered": 100,
+          "r_total_filtered": 100,
           "r_filtered": 100
         }
       },
@@ -273,6 +275,7 @@ ANALYZE
           "r_table_time_ms": "REPLACED",
           "r_other_time_ms": "REPLACED",
           "filtered": 100,
+          "r_total_filtered": 100,
           "r_filtered": 100,
           "materialized": {
             "query_block": {
@@ -494,12 +497,12 @@ CREATE TABLE federated.t3 (a INT);
 INSERT INTO federated.t3 VALUES (1),(2),(3);
 CREATE TABLE federated.t4 (a INT);
 connection master;
-CREATE SERVER fedlink FOREIGN DATA WRAPPER mysql 
+CREATE SERVER fedlink FOREIGN DATA WRAPPER mariadb
 OPTIONS (USER 'root', HOST '127.0.0.1', DATABASE 'federated',
 PORT SLAVE_PORT);
 CREATE TABLE federated.t3 (a INT)
 ENGINE=FEDERATED
-CONNECTION='mysql://root@127.0.0.1:$SLAVE_MYPORT/federated/t3'
+CONNECTION='mariadb://root@127.0.0.1:$SLAVE_MYPORT/federated/t3'
   PARTITION BY list (a)
 (PARTITION p1 VALUES IN (1) CONNECTION='fedlink/t3',
 PARTITION p2 VALUES IN (2) CONNECTION='fedlink/t4');
@@ -511,6 +514,7 @@ a
 1
 2
 3
+DROP SERVER fedlink;
 #
 # MDEV-29655: ASAN heap-use-after-free in
 #             Pushdown_derived::Pushdown_derived
@@ -536,6 +540,22 @@ use federated;
 SELECT * FROM (SELECT * FROM (SELECT * FROM (SELECT * FROM t1 where id=3) dt3
 WHERE id=2) dt2) dt;
 id	name
+PREPARE stmt FROM "
+SELECT * FROM (SELECT * FROM (SELECT * FROM (SELECT * FROM t1 where id=3) dt3
+  WHERE id=3) dt2) dt;
+";
+EXECUTE stmt;
+id	name
+3	xxx
+EXECUTE stmt;
+id	name
+3	xxx
+DEALLOCATE PREPARE stmt;
+EXPLAIN
+SELECT * FROM (SELECT * FROM (SELECT * FROM (SELECT * FROM t1 where id=3) dt3
+WHERE id=3) dt2) dt;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	Extra
+1	PUSHED SELECT	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 connection slave;
 CREATE TABLE federated.t10 (a INT,b INT);
 CREATE TABLE federated.t11 (a INT, b INT);
@@ -556,6 +576,54 @@ WHERE id=2) dt2) dt
 a	b	a	b	id	name
 1	1	NULL	NULL	NULL	NULL
 2	2	NULL	NULL	NULL	NULL
+#
+# MDEV-31361: Second execution of PS for query with derived table
+#
+connection slave;
+DROP TABLE IF EXISTS federated.t1;
+CREATE TABLE federated.t1 (
+id int(20) NOT NULL,
+name varchar(16) NOT NULL default ''
+)
+DEFAULT CHARSET=latin1;
+INSERT INTO federated.t1 VALUES
+(3,'xxx'), (7,'yyy'), (4,'xxx'), (1,'zzz'), (5,'yyy');
+connection master;
+DROP TABLE IF EXISTS federated.t1;
+CREATE TABLE federated.t1 (
+id int(20) NOT NULL,
+name varchar(16) NOT NULL default ''
+)
+ENGINE="FEDERATED" DEFAULT CHARSET=latin1
+CONNECTION='mysql://root@127.0.0.1:SLAVE_PORT/federated/t1';
+use federated;
+SELECT * FROM
+(SELECT * FROM
+(SELECT * FROM
+(SELECT * FROM t1 where id>3) dt3
+WHERE id>3) dt2
+) dt;
+id	name
+7	yyy
+4	xxx
+5	yyy
+PREPARE stmt FROM "SELECT * FROM
+(SELECT * FROM
+(SELECT * FROM
+(SELECT * FROM t1 where id>3) dt3
+WHERE id>3) dt2
+) dt";
+EXECUTE stmt;
+id	name
+7	yyy
+4	xxx
+5	yyy
+EXECUTE stmt;
+id	name
+7	yyy
+4	xxx
+5	yyy
+DEALLOCATE PREPARE stmt;
 DROP TABLES federated.t1, federated.t2, federated.t3, federated.t10,
 federated.t11;
 connection slave;
@@ -1107,14 +1175,14 @@ abc
 abc
 # Check handling of incorrect ORDER BY clause
 SELECT a FROM federated.t1 UNION SELECT a FROM federated.t2 ORDER BY 2;
-ERROR 42S22: Unknown column '2' in 'order clause'
+ERROR 42S22: Unknown column '2' in 'ORDER BY'
 PREPARE stmt FROM
 "SELECT a FROM federated.t1 UNION ALL SELECT a FROM federated.t2 ORDER BY 2";
-ERROR 42S22: Unknown column '2' in 'order clause'
+ERROR 42S22: Unknown column '2' in 'ORDER BY'
 SELECT a FROM federated.t1 UNION ALL SELECT a FROM federated.t2 ORDER BY 2,1,3;
-ERROR 42S22: Unknown column '2' in 'order clause'
+ERROR 42S22: Unknown column '2' in 'ORDER BY'
 SELECT a FROM federated.t1 UNION ALL SELECT a FROM federated.t2 ORDER BY t1.a;
-ERROR 42000: Table 't1' from one of the SELECTs cannot be used in ORDER clause
+ERROR 42000: Table 't1' from one of the SELECTs cannot be used in ORDER BY
 SELECT * from federated.t1 INTERSECT
 SELECT * from federated.t2 UNION ALL
 SELECT * from federated.t2 EXCEPT
@@ -1128,7 +1196,7 @@ SELECT * from federated.t2 UNION ALL
 SELECT * from federated.t2 EXCEPT
 SELECT * from federated.t1
 ORDER BY 3;
-ERROR 42S22: Unknown column '3' in 'order clause'
+ERROR 42S22: Unknown column '3' in 'ORDER BY'
 # UNION of mixed Federated/MyISAM tables, pushing parts of UNIONs
 SELECT * FROM federated.t1 UNION SELECT * FROM t3 ORDER BY a;
 a
@@ -1139,7 +1207,112 @@ t3_myisam1
 t3_myisam2
 t3_myisam3
 SELECT * FROM federated.t1 UNION SELECT * FROM t3 ORDER BY 2;
-ERROR 42S22: Unknown column '2' in 'order clause'
+ERROR 42S22: Unknown column '2' in 'ORDER BY'
+#
+# MDEV-32382 FederatedX error on pushdown of statement having CTE
+#
+# Single SELECT with CTE
+WITH cte AS (SELECT * FROM federated.t1)
+SELECT * FROM cte;
+a
+bcd
+abc
+cde
+explain extended WITH cte AS (SELECT * FROM federated.t1)
+SELECT * FROM cte;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	PUSHED SELECT	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+Warnings:
+Note	1003	with cte as (/* select#2 */ select `federated`.`t1`.`a` AS `a` from `federated`.`t1`)/* select#1 */ select `cte`.`a` AS `a` from `cte`
+# Pushdown of a UNION having CTE's
+WITH cte AS (SELECT * FROM federated.t1),
+cte2 AS (SELECT * FROM federated.t2)
+SELECT * FROM cte
+UNION
+SELECT * FROM cte2;
+a
+abc
+bcd
+cde
+def
+efg
+explain extended WITH cte AS (SELECT * FROM federated.t1),
+cte2 AS (SELECT * FROM federated.t2)
+SELECT * FROM cte
+UNION
+SELECT * FROM cte2;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+NULL	PUSHED UNION	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+Warnings:
+Note	1003	with cte as (/* select#2 */ select `federated`.`t1`.`a` AS `a` from `federated`.`t1`), cte2 as (/* select#3 */ select `federated`.`t2`.`a` AS `a` from `federated`.`t2`)/* select#1 */ select `cte`.`a` AS `a` from `cte` union /* select#4 */ select `cte2`.`a` AS `a` from `cte2`
+# Partial pushdown is not allowed for unions with CTE's, however a CTE
+# may be pushed down a derived table
+WITH cte AS (SELECT * FROM federated.t1)
+SELECT * FROM cte
+UNION ALL
+SELECT * FROM t3;
+a
+abc
+bcd
+cde
+t3_myisam1
+t3_myisam2
+t3_myisam3
+explain extended WITH cte AS (SELECT * FROM federated.t1)
+SELECT * FROM cte
+UNION ALL
+SELECT * FROM t3;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	PRIMARY	<derived2>	ALL	NULL	NULL	NULL	NULL	3	100.00	
+2	PUSHED DERIVED	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+3	UNION	t3	ALL	NULL	NULL	NULL	NULL	3	100.00	
+Warnings:
+Note	1003	with cte as (/* select#2 */ select `federated`.`t1`.`a` AS `a` from `federated`.`t1`)/* select#1 */ select `cte`.`a` AS `a` from `cte` union all /* select#3 */ select `federated`.`t3`.`a` AS `a` from `federated`.`t3`
+WITH cte AS (SELECT * FROM federated.t1 UNION SELECT * FROM t3)
+SELECT * FROM cte;
+a
+abc
+bcd
+cde
+t3_myisam1
+t3_myisam2
+t3_myisam3
+explain extended WITH cte AS (SELECT * FROM federated.t1 UNION SELECT * FROM t3)
+SELECT * FROM cte;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	PRIMARY	<derived2>	ALL	NULL	NULL	NULL	NULL	6	100.00	
+2	DERIVED	t1	ALL	NULL	NULL	NULL	NULL	3	100.00	
+3	UNION	t3	ALL	NULL	NULL	NULL	NULL	3	100.00	
+NULL	UNION RESULT	<union2,3>	ALL	NULL	NULL	NULL	NULL	NULL	NULL	
+Warnings:
+Note	1003	with cte as (/* select#2 */ select `federated`.`t1`.`a` AS `a` from `federated`.`t1` union /* select#3 */ select `federated`.`t3`.`a` AS `a` from `federated`.`t3`)/* select#1 */ select `cte`.`a` AS `a` from `cte`
+# Two CTE's where one CTE refers to another
+WITH cte AS (SELECT * FROM federated.t1),
+cte2 AS (SELECT * FROM t3
+WHERE t3.a NOT IN (SELECT * FROM cte))
+SELECT * FROM cte JOIN cte2;
+a	a
+abc	t3_myisam1
+abc	t3_myisam2
+abc	t3_myisam3
+bcd	t3_myisam1
+bcd	t3_myisam2
+bcd	t3_myisam3
+cde	t3_myisam1
+cde	t3_myisam2
+cde	t3_myisam3
+explain extended WITH cte AS (SELECT * FROM federated.t1),
+cte2 AS (SELECT * FROM t3
+WHERE t3.a NOT IN (SELECT * FROM cte))
+SELECT * FROM cte JOIN cte2;
+id	select_type	table	type	possible_keys	key	key_len	ref	rows	filtered	Extra
+1	PRIMARY	<derived5>	ALL	NULL	NULL	NULL	NULL	3	100.00	
+1	PRIMARY	t3	ALL	NULL	NULL	NULL	NULL	3	100.00	Using where; Using join buffer (flat, BNL join)
+5	PUSHED DERIVED	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+4	MATERIALIZED	<derived2>	ALL	NULL	NULL	NULL	NULL	3	100.00	
+2	PUSHED DERIVED	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+Warnings:
+Note	1003	with cte as (/* select#2 */ select `federated`.`t1`.`a` AS `a` from `federated`.`t1`), cte2 as (/* select#3 */ select `federated`.`t3`.`a` AS `a` from `federated`.`t3` where !<expr_cache><`federated`.`t3`.`a`>(<in_optimizer>(`federated`.`t3`.`a`,`federated`.`t3`.`a` in ( <materialize> (/* select#4 */ select `cte`.`a` from `cte` ), <primary_index_lookup>(`federated`.`t3`.`a` in <temporary table> on distinct_key where `federated`.`t3`.`a` = `<subquery4>`.`a`)))))/* select#1 */ select `cte`.`a` AS `a`,`federated`.`t3`.`a` AS `a` from `cte` join `federated`.`t3` where !<expr_cache><`federated`.`t3`.`a`>(<in_optimizer>(`federated`.`t3`.`a`,`federated`.`t3`.`a` in ( <materialize> (/* select#4 */ select `cte`.`a` from `cte` ), <primary_index_lookup>(`federated`.`t3`.`a` in <temporary table> on distinct_key where `federated`.`t3`.`a` = `<subquery4>`.`a`))))
 connection master;
 DROP TABLES federated.t1, federated.t2, t3, t4, t5, t6, federated.t11,
 federated.t12, federated.t13, federated.t14;

@@ -191,12 +191,12 @@ Rowid_filter_container *Range_rowid_filter_cost_info::create_container()
 }
 
 
-static
-int compare_range_rowid_filter_cost_info_by_a(
-                        Range_rowid_filter_cost_info **filter_ptr_1,
-                        Range_rowid_filter_cost_info **filter_ptr_2)
+static int compare_range_rowid_filter_cost_info_by_a(const void *p1_,
+                                                     const void *p2_)
 {
-  double diff= (*filter_ptr_2)->get_gain() - (*filter_ptr_1)->get_gain();
+  auto p1= static_cast<const Range_rowid_filter_cost_info *const *>(p1_);
+  auto p2= static_cast<const Range_rowid_filter_cost_info *const *>(p2_);
+  double diff= (*p2)->get_gain() - (*p1)->get_gain();
   return (diff < 0 ? -1 : (diff > 0 ? 1 : 0));
 }
 
@@ -399,10 +399,8 @@ void TABLE::init_cost_info_for_usable_range_rowid_filters(THD *thd)
   if (!range_rowid_filter_cost_info_elems)
     return;
 
-  range_rowid_filter_cost_info_ptr=
-    (Range_rowid_filter_cost_info **)
-      thd->calloc(sizeof(Range_rowid_filter_cost_info *) *
-                  range_rowid_filter_cost_info_elems);
+  range_rowid_filter_cost_info_ptr= thd->calloc<Range_rowid_filter_cost_info*>
+                                      (range_rowid_filter_cost_info_elems);
   range_rowid_filter_cost_info=
     new (thd->mem_root)
       Range_rowid_filter_cost_info[range_rowid_filter_cost_info_elems];
@@ -560,8 +558,11 @@ TABLE::best_range_rowid_filter(uint access_key_no, double records,
     range filter and place into the filter the rowids / primary keys
     read from key tuples when doing this scan.
   @retval
-    false  on success
-    true   otherwise
+    Rowid_filter::SUCCESS          on success
+    Rowid_filter::NON_FATAL_ERROR  the error which does not require transaction
+                                   rollback
+    Rowid_filter::FATAL_ERROR      the error which does require transaction
+                                   rollback
 
   @note
     The function assumes that the quick select object to perform
@@ -574,9 +575,9 @@ TABLE::best_range_rowid_filter(uint access_key_no, double records,
     purposes to facilitate a lazy building of the filter.
 */
 
-bool Range_rowid_filter::fill()
+Rowid_filter::build_return_code Range_rowid_filter::build()
 {
-  int rc= 0;
+  build_return_code rc= SUCCESS;
   handler *file= table->file;
   THD *thd= table->in_use;
   QUICK_RANGE_SELECT* quick= (QUICK_RANGE_SELECT*) select->quick;
@@ -598,19 +599,37 @@ bool Range_rowid_filter::fill()
   file->ha_start_keyread(quick->index);
 
   if (quick->init() || quick->reset())
-    goto end;
-
-  while (!(rc= quick->get_next()))
+    rc= FATAL_ERROR;
+  else
   {
-    file->position(quick->record);
-    if (container->add(NULL, (char*) file->ref) || thd->killed)
+    for (;;)
     {
-      rc= 1;
-      break;
+      int quick_get_next_result= quick->get_next();
+      if (thd->check_killed())
+      {
+        rc= FATAL_ERROR;
+        break;
+      }
+      if (quick_get_next_result != 0)
+      {
+        rc= (quick_get_next_result == HA_ERR_END_OF_FILE ? SUCCESS
+                                                        : FATAL_ERROR);
+        /*
+          The error state has been set by file->print_error(res, MYF(0)) call
+          inside quick->get_next() call, in Mrr_simple_index_reader::get_next()
+        */
+        DBUG_ASSERT(rc == SUCCESS || thd->is_error());
+        break;
+      }
+      file->position(quick->record);
+      if (container->add(NULL, (char *) file->ref))
+      {
+        rc= NON_FATAL_ERROR;
+        break;
+      }
     }
   }
 
-end:
   quick->range_end();
   file->ha_end_keyread();
   file->ha_restart_keyread(org_keyread);
@@ -623,11 +642,12 @@ end:
   tracker->set_container_elements_count(container->elements());
   tracker->report_container_buff_size(file->ref_length);
 
-  if (rc != HA_ERR_END_OF_FILE)
-    return 1;
+  if (rc != SUCCESS)
+    return rc;
+
   container->sort(refpos_order_cmp, (void *) file);
-  file->rowid_filter_is_active= container->elements() != 0;
-  return 0;
+  table->file->rowid_filter_is_active= true;
+  return rc;
 }
 
 
@@ -636,7 +656,7 @@ end:
     Binary search in the sorted array of a rowid filter
 
   @param ctxt   context of the search
-  @parab elem   rowid / primary key to look for
+  @param elem   rowid / primary key to look for
 
   @details
     The function looks for the rowid / primary key ' elem' in this container

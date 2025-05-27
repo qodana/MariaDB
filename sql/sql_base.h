@@ -95,7 +95,7 @@ TABLE *open_ltable(THD *thd, TABLE_LIST *table_list, thr_lock_type update,
 */
 #define MYSQL_OPEN_GET_NEW_TABLE                0x0040
 /* 0x0080 used to be MYSQL_OPEN_SKIP_TEMPORARY */
-/** Fail instead of waiting when conficting metadata lock is discovered. */
+/** Fail instead of waiting when conflicting metadata lock is discovered. */
 #define MYSQL_OPEN_FAIL_ON_MDL_CONFLICT         0x0100
 /** Open tables using MDL_SHARED lock instead of one specified in parser. */
 #define MYSQL_OPEN_FORCE_SHARED_MDL             0x0200
@@ -131,6 +131,9 @@ TABLE *open_ltable(THD *thd, TABLE_LIST *table_list, thr_lock_type update,
 */
 #define MYSQL_OPEN_IGNORE_LOGGING_FORMAT        0x20000
 
+/* Don't use statistics tables */
+#define MYSQL_OPEN_IGNORE_ENGINE_STATS          0x40000
+
 /** Please refer to the internals manual. */
 #define MYSQL_OPEN_REOPEN  (MYSQL_OPEN_IGNORE_FLUSH |\
                             MYSQL_OPEN_IGNORE_GLOBAL_READ_LOCK |\
@@ -154,7 +157,8 @@ thr_lock_type read_lock_type_for_table(THD *thd,
 
 my_bool mysql_rm_tmp_tables(void);
 void close_tables_for_reopen(THD *thd, TABLE_LIST **tables,
-                             const MDL_savepoint &start_of_statement_svp);
+                             const MDL_savepoint &start_of_statement_svp,
+                             bool remove_indirect);
 bool table_already_fk_prelocked(TABLE_LIST *tl, LEX_CSTRING *db,
                                 LEX_CSTRING *table, thr_lock_type lock_type);
 TABLE_LIST *find_table_in_list(TABLE_LIST *table,
@@ -169,14 +173,17 @@ bool fill_record_n_invoke_before_triggers(THD *thd, TABLE *table,
                                           List<Item> &fields,
                                           List<Item> &values,
                                           bool ignore_errors,
-                                          enum trg_event_type event);
+                                          enum trg_event_type event,
+                                          bool *skip_row_indicator);
 bool fill_record_n_invoke_before_triggers(THD *thd, TABLE *table,
                                           Field **field,
                                           List<Item> &values,
                                           bool ignore_errors,
-                                          enum trg_event_type event);
+                                          enum trg_event_type event,
+                                          bool *skip_row_indicator);
 bool insert_fields(THD *thd, Name_resolution_context *context,
-                   const LEX_CSTRING &db_name, const LEX_CSTRING &table_name,
+                   const Lex_ident_db &db_name,
+                   const Lex_ident_table &table_name,
                    List_iterator<Item> *it, bool any_privileges,
                    uint *hidden_bit_fields, bool returning_field);
 void make_leaves_list(THD *thd, List<TABLE_LIST> &list, TABLE_LIST *tables,
@@ -187,12 +194,13 @@ int setup_returning_fields(THD* thd, TABLE_LIST* table_list);
 bool setup_fields(THD *thd, Ref_ptr_array ref_pointer_array,
                   List<Item> &item, enum_column_usage column_usage,
                   List<Item> *sum_func_list, List<Item> *pre_fix,
-                  bool allow_sum_func);
+                  bool allow_sum_func, THD_WHERE where= THD_WHERE::DEFAULT_WHERE);
 void unfix_fields(List<Item> &items);
 bool fill_record(THD * thd, TABLE *table_arg, List<Item> &fields,
                  List<Item> &values, bool ignore_errors, bool update);
 bool fill_record(THD *thd, TABLE *table, Field **field, List<Item> &values,
-                 bool ignore_errors, bool use_value);
+                 bool ignore_errors, bool use_value,
+                 bool check_for_evaluability);
 
 Field *
 find_field_in_tables(THD *thd, Item_ident *item,
@@ -202,7 +210,7 @@ find_field_in_tables(THD *thd, Item_ident *item,
                      bool check_privileges, bool register_tree_change);
 Field *
 find_field_in_table_ref(THD *thd, TABLE_LIST *table_list,
-                        const char *name, size_t length,
+                        const Lex_ident_column &name,
                         const char *item_name, const char *db_name,
                         const char *table_name,
                         ignored_tables_list_t ignored_tables,
@@ -210,10 +218,10 @@ find_field_in_table_ref(THD *thd, TABLE_LIST *table_list,
                         field_index_t *cached_field_index_ptr,
                         bool register_tree_change, TABLE_LIST **actual_table);
 Field *
-find_field_in_table(THD *thd, TABLE *table, const char *name, size_t length,
+find_field_in_table(THD *thd, TABLE *table, const Lex_ident_column &name,
                     bool allow_rowid, field_index_t *cached_field_index_ptr);
 Field *
-find_field_in_table_sef(TABLE *table, const char *name);
+find_field_in_table_sef(TABLE *table, const Lex_ident_column &name);
 Item ** find_item_in_list(Item *item, List<Item> &items, uint *counter,
                           find_item_error_report_type report_error,
                           enum_resolution_type *resolution, uint limit= 0);
@@ -315,7 +323,8 @@ bool flush_tables(THD *thd, flush_tables_type flag);
 void close_all_tables_for_name(THD *thd, TABLE_SHARE *share,
                                ha_extra_function extra,
                                TABLE *skip_table);
-OPEN_TABLE_LIST *list_open_tables(THD *thd, const char *db, const char *wild);
+OPEN_TABLE_LIST *list_open_tables(THD *thd, const LEX_CSTRING &db,
+                                  const char *wild);
 bool tdc_open_view(THD *thd, TABLE_LIST *table_list, uint flags);
 
 TABLE *find_table_for_mdl_upgrade(THD *thd, const char *db,
@@ -328,10 +337,9 @@ int dynamic_column_error_message(enum_dyncol_func_result rc);
 /* open_and_lock_tables with optional derived handling */
 int open_and_lock_tables_derived(THD *thd, TABLE_LIST *tables, bool derived);
 
-extern "C" int simple_raw_key_cmp(void* arg, const void* key1,
-                                  const void* key2);
+extern "C" int simple_raw_key_cmp(void *arg, const void *key1, const void *key2);
 extern "C" int count_distinct_walk(void *elem, element_count count, void *arg);
-int simple_str_key_cmp(void* arg, uchar* key1, uchar* key2);
+int simple_str_key_cmp(void *arg, const void *key1, const void *key2);
 
 extern Item **not_found_item;
 extern Field *not_found_field;
@@ -359,6 +367,7 @@ inline void setup_table_map(TABLE *table, TABLE_LIST *table_list, uint tablenr)
     table->maybe_null= embedding->outer_join;
     embedding= embedding->embedding;
   }
+  DBUG_ASSERT(tablenr <= MAX_TABLES);
   table->tablenr= tablenr;
   table->map= (table_map) 1 << tablenr;
   table->force_index= table->force_index_join= 0;
@@ -367,8 +376,8 @@ inline void setup_table_map(TABLE *table, TABLE_LIST *table_list, uint tablenr)
 }
 
 inline TABLE_LIST *find_table_in_global_list(TABLE_LIST *table,
-                                             LEX_CSTRING *db_name,
-                                             LEX_CSTRING *table_name)
+                                             const LEX_CSTRING *db_name,
+                                             const LEX_CSTRING *table_name)
 {
   return find_table_in_list(table, &TABLE_LIST::next_global,
                             db_name, table_name);
@@ -378,14 +387,15 @@ inline bool setup_fields_with_no_wrap(THD *thd, Ref_ptr_array ref_pointer_array,
                                       List<Item> &item,
                                       enum_column_usage column_usage,
                                       List<Item> *sum_func_list,
-                                      bool allow_sum_func)
+                                      bool allow_sum_func,
+                                      THD_WHERE where= THD_WHERE::DEFAULT_WHERE)
 {
   bool res;
   SELECT_LEX *first= thd->lex->first_select_lex();
   DBUG_ASSERT(thd->lex->current_select == first);
   first->no_wrap_view_item= TRUE;
   res= setup_fields(thd, ref_pointer_array, item, column_usage,
-                    sum_func_list, NULL,  allow_sum_func);
+                    sum_func_list, NULL,  allow_sum_func, where);
   first->no_wrap_view_item= FALSE;
   return res;
 }
@@ -424,13 +434,13 @@ public:
 class DML_prelocking_strategy : public Prelocking_strategy
 {
 public:
-  virtual bool handle_routine(THD *thd, Query_tables_list *prelocking_ctx,
-                              Sroutine_hash_entry *rt, sp_head *sp,
-                              bool *need_prelocking);
-  virtual bool handle_table(THD *thd, Query_tables_list *prelocking_ctx,
-                            TABLE_LIST *table_list, bool *need_prelocking);
-  virtual bool handle_view(THD *thd, Query_tables_list *prelocking_ctx,
-                           TABLE_LIST *table_list, bool *need_prelocking);
+  bool handle_routine(THD *thd, Query_tables_list *prelocking_ctx,
+                      Sroutine_hash_entry *rt, sp_head *sp,
+                      bool *need_prelocking) override;
+  bool handle_table(THD *thd, Query_tables_list *prelocking_ctx,
+                    TABLE_LIST *table_list, bool *need_prelocking) override;
+  bool handle_view(THD *thd, Query_tables_list *prelocking_ctx,
+                   TABLE_LIST *table_list, bool *need_prelocking) override;
 };
 
 
@@ -440,8 +450,8 @@ class Multiupdate_prelocking_strategy : public DML_prelocking_strategy
   bool done;
   bool has_prelocking_list;
 public:
-  void reset(THD *thd);
-  bool handle_end(THD *thd);
+  void reset(THD *thd) override;
+  bool handle_end(THD *thd) override;
 };
 
 
@@ -452,8 +462,8 @@ public:
 
 class Lock_tables_prelocking_strategy : public DML_prelocking_strategy
 {
-  virtual bool handle_table(THD *thd, Query_tables_list *prelocking_ctx,
-                            TABLE_LIST *table_list, bool *need_prelocking);
+  bool handle_table(THD *thd, Query_tables_list *prelocking_ctx,
+                    TABLE_LIST *table_list, bool *need_prelocking) override;
 };
 
 
@@ -468,13 +478,13 @@ class Lock_tables_prelocking_strategy : public DML_prelocking_strategy
 class Alter_table_prelocking_strategy : public Prelocking_strategy
 {
 public:
-  virtual bool handle_routine(THD *thd, Query_tables_list *prelocking_ctx,
-                              Sroutine_hash_entry *rt, sp_head *sp,
-                              bool *need_prelocking);
-  virtual bool handle_table(THD *thd, Query_tables_list *prelocking_ctx,
-                            TABLE_LIST *table_list, bool *need_prelocking);
-  virtual bool handle_view(THD *thd, Query_tables_list *prelocking_ctx,
-                           TABLE_LIST *table_list, bool *need_prelocking);
+  bool handle_routine(THD *thd, Query_tables_list *prelocking_ctx,
+                      Sroutine_hash_entry *rt, sp_head *sp,
+                      bool *need_prelocking) override;
+  bool handle_table(THD *thd, Query_tables_list *prelocking_ctx,
+                    TABLE_LIST *table_list, bool *need_prelocking) override;
+  bool handle_view(THD *thd, Query_tables_list *prelocking_ctx,
+                   TABLE_LIST *table_list, bool *need_prelocking) override;
 };
 
 
@@ -576,11 +586,6 @@ public:
     return m_timeout;
   }
 
-  enum_open_table_action get_action() const
-  {
-    return m_action;
-  }
-
   uint get_flags() const { return m_flags; }
 
   /**
@@ -665,7 +670,7 @@ class No_such_table_error_handler : public Internal_error_handler
 {
 public:
   No_such_table_error_handler()
-    : m_handled_errors(0), m_unhandled_errors(0)
+    : m_handled_errors(0), m_unhandled_errors(0), first_error(0)
   {}
 
   bool handle_condition(THD *thd,
@@ -673,18 +678,18 @@ public:
                         const char* sqlstate,
                         Sql_condition::enum_warning_level *level,
                         const char* msg,
-                        Sql_condition ** cond_hdl);
+                        Sql_condition ** cond_hdl) override;
 
   /**
     Returns TRUE if one or more ER_NO_SUCH_TABLE errors have been
     trapped and no other errors have been seen. FALSE otherwise.
   */
   bool safely_trapped_errors();
+  uint got_error() { return first_error; }
 
 private:
   int m_handled_errors;
   int m_unhandled_errors;
+  uint first_error;
 };
-
-
 #endif /* SQL_BASE_INCLUDED */

@@ -37,7 +37,6 @@
 #define MYSQL_SERVER 1
 #include <my_global.h>
 #include "mysql_version.h"
-#include "spd_environ.h"
 #include "sql_priv.h"
 #include "probes_mysql.h"
 #include "sql_class.h"
@@ -109,59 +108,61 @@ extern volatile ulonglong spider_mon_table_cache_version_req;
       MYSQL_SYSVAR_NAME(param_name).def_val;                            \
   }
 
-static int spider_direct_update(THD *thd, SHOW_VAR *var, char *buff)
+extern handlerton *spider_hton_ptr;
+static void spider_trx_status_var(THD *thd, SHOW_VAR *var, void *buff,
+                                 ulonglong SPIDER_TRX::*counter)
 {
-  int error_num = 0;
-  SPIDER_TRX *trx;
   DBUG_ENTER("spider_direct_update");
   var->type = SHOW_LONGLONG;
-  if ((trx = spider_get_trx(thd, TRUE, &error_num)))
-    var->value = (char *) &trx->direct_update_count;
-  DBUG_RETURN(error_num);
+  var->value= buff;
+  if (thd != current_thd)
+    mysql_mutex_lock(&thd->LOCK_thd_data);
+  SPIDER_TRX *trx = (SPIDER_TRX*)thd_get_ha_data(thd, spider_hton_ptr);
+  *(ulonglong*)buff= trx ? trx->*counter : 0;
+  if (thd != current_thd)
+    mysql_mutex_unlock(&thd->LOCK_thd_data);
+  DBUG_VOID_RETURN;
 }
 
-static int spider_direct_delete(THD *thd, SHOW_VAR *var, char *buff)
+
+static int spider_direct_update(THD *thd, SHOW_VAR *var, void *buff,
+                                system_status_var *, enum_var_type)
 {
-  int error_num = 0;
-  SPIDER_TRX *trx;
+  DBUG_ENTER("spider_direct_update");
+  spider_trx_status_var(thd, var, buff, &SPIDER_TRX::direct_update_count);
+  DBUG_RETURN(0);
+}
+
+static int spider_direct_delete(THD *thd, SHOW_VAR *var, void *buff,
+                                system_status_var *, enum_var_type)
+{
   DBUG_ENTER("spider_direct_delete");
-  var->type = SHOW_LONGLONG;
-  if ((trx = spider_get_trx(thd, TRUE, &error_num)))
-    var->value = (char *) &trx->direct_delete_count;
-  DBUG_RETURN(error_num);
+  spider_trx_status_var(thd, var, buff, &SPIDER_TRX::direct_delete_count);
+  DBUG_RETURN(0);
 }
 
-static int spider_direct_order_limit(THD *thd, SHOW_VAR *var, char *buff)
+static int spider_direct_order_limit(THD *thd, SHOW_VAR *var, void *buff,
+                                     system_status_var *, enum_var_type)
 {
-  int error_num = 0;
-  SPIDER_TRX *trx;
   DBUG_ENTER("spider_direct_order_limit");
-  var->type = SHOW_LONGLONG;
-  if ((trx = spider_get_trx(thd, TRUE, &error_num)))
-    var->value = (char *) &trx->direct_order_limit_count;
-  DBUG_RETURN(error_num);
+  spider_trx_status_var(thd, var, buff, &SPIDER_TRX::direct_order_limit_count);
+  DBUG_RETURN(0);
 }
 
-static int spider_direct_aggregate(THD *thd, SHOW_VAR *var, char *buff)
+static int spider_direct_aggregate(THD *thd, SHOW_VAR *var, void *buff,
+                                   system_status_var *, enum_var_type)
 {
-  int error_num = 0;
-  SPIDER_TRX *trx;
   DBUG_ENTER("spider_direct_aggregate");
-  var->type = SHOW_LONGLONG;
-  if ((trx = spider_get_trx(thd, TRUE, &error_num)))
-    var->value = (char *) &trx->direct_aggregate_count;
-  DBUG_RETURN(error_num);
+  spider_trx_status_var(thd, var, buff, &SPIDER_TRX::direct_aggregate_count);
+  DBUG_RETURN(0);
 }
 
-static int spider_parallel_search(THD *thd, SHOW_VAR *var, char *buff)
+static int spider_parallel_search(THD *thd, SHOW_VAR *var, void *buff,
+                                  system_status_var *, enum_var_type)
 {
-  int error_num = 0;
-  SPIDER_TRX *trx;
   DBUG_ENTER("spider_parallel_search");
-  var->type = SHOW_LONGLONG;
-  if ((trx = spider_get_trx(thd, TRUE, &error_num)))
-    var->value = (char *) &trx->parallel_search_count;
-  DBUG_RETURN(error_num);
+  spider_trx_status_var(thd, var, buff, &SPIDER_TRX::parallel_search_count);
+  DBUG_RETURN(0);
 }
 
 struct st_mysql_show_var spider_status_variables[] =
@@ -513,7 +514,7 @@ SPIDER_THDVAR_OVERRIDE_VALUE_FUNC(longlong, split_read)
 static MYSQL_THDVAR_INT(
   semi_split_read, /* name */
   PLUGIN_VAR_RQCMDARG, /* opt */
-  "Use offset and limit parameter in SQL for split_read parameter.", /* comment */
+  "Use offset and limit parameter in SQL for split_read parameter", /* comment */
   NULL, /* check */
   spider_var_deprecated_int, /* update */
   2, /* def */
@@ -588,7 +589,7 @@ SPIDER_THDVAR_OVERRIDE_VALUE_FUNC(int, reset_sql_alloc)
 static MYSQL_THDVAR_INT(
   multi_split_read, /* name */
   PLUGIN_VAR_RQCMDARG, /* opt */
-  "Sprit read mode for multi range", /* comment */
+  "Split read mode for multi range", /* comment */
   NULL, /* check */
   spider_var_deprecated_int, /* update */
   100, /* def */
@@ -659,7 +660,7 @@ static int spider_param_semi_table_lock_check(
     DBUG_RETURN(ER_SPIDER_ALTER_BEFORE_UNLOCK_NUM);
   }
   value->val_int(value, &tmp);
-  options.sub_size = 0;
+  options.deprecation_substitute = 0;
   options.var_type = GET_INT;
   options.def_value = ((MYSQL_SYSVAR_NAME(thdvar_int_t) *) var)->def_val;
   options.min_value = ((MYSQL_SYSVAR_NAME(thdvar_int_t) *) var)->min_val;
@@ -712,7 +713,7 @@ static int spider_param_semi_table_lock_connection_check(
     DBUG_RETURN(ER_SPIDER_ALTER_BEFORE_UNLOCK_NUM);
   }
   value->val_int(value, &tmp);
-  options.sub_size = 0;
+  options.deprecation_substitute = 0;
   options.var_type = GET_INT;
   options.def_value = ((MYSQL_SYSVAR_NAME(thdvar_int_t) *) var)->def_val;
   options.min_value = ((MYSQL_SYSVAR_NAME(thdvar_int_t) *) var)->min_val;
@@ -1316,7 +1317,7 @@ SPIDER_THDVAR_OVERRIDE_VALUE_FUNC(double, crd_interval)
 static MYSQL_THDVAR_INT(
   crd_mode, /* name */
   PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_DEPRECATED, /* opt */
-  "Mode of cardinality confirmation.", /* comment */
+  "Mode of cardinality confirmation", /* comment */
   NULL, /* check */
   spider_var_deprecated_int, /* update */
   1, /* def */
@@ -1337,7 +1338,7 @@ SPIDER_THDVAR_OVERRIDE_VALUE_FUNC(int, crd_mode)
 static MYSQL_THDVAR_INT(
   crd_sync, /* name */
   PLUGIN_VAR_RQCMDARG, /* opt */
-  "Cardinality synchronization in partitioned table.", /* comment */
+  "Cardinality synchronization in partitioned table", /* comment */
   NULL, /* check */
   spider_var_deprecated_int, /* update */
   0, /* def */
@@ -1357,7 +1358,7 @@ SPIDER_THDVAR_OVERRIDE_VALUE_FUNC(int, crd_sync)
 static MYSQL_THDVAR_INT(
   crd_type, /* name */
   PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_DEPRECATED, /* opt */
-  "Type of cardinality calculation.", /* comment */
+  "Type of cardinality calculation", /* comment */
   NULL, /* check */
   spider_var_deprecated_int, /* update */
   2, /* def */
@@ -1375,7 +1376,7 @@ SPIDER_THDVAR_OVERRIDE_VALUE_FUNC(int, crd_type)
 static MYSQL_THDVAR_INT(
   crd_weight, /* name */
   PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_DEPRECATED, /* opt */
-  "Weight coefficient to calculate effectiveness of index from cardinality of column.", /* comment */
+  "Weight coefficient to calculate effectiveness of index from cardinality of column", /* comment */
   NULL, /* check */
   spider_var_deprecated_int, /* update */
   2, /* def */
@@ -1395,7 +1396,7 @@ SPIDER_THDVAR_OVERRIDE_VALUE_FUNC(double, crd_weight)
 static MYSQL_THDVAR_INT(
   crd_bg_mode, /* name */
   PLUGIN_VAR_RQCMDARG, /* opt */
-  "Mode of cardinality confirmation at background.", /* comment */
+  "Mode of cardinality confirmation at background", /* comment */
   NULL, /* check */
   spider_var_deprecated_int, /* update */
   2, /* def */
@@ -1434,7 +1435,7 @@ SPIDER_THDVAR_OVERRIDE_VALUE_FUNC(double, sts_interval)
 static MYSQL_THDVAR_INT(
   sts_mode, /* name */
   PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_DEPRECATED, /* opt */
-  "Mode of table state confirmation.", /* comment */
+  "Mode of table state confirmation", /* comment */
   NULL, /* check */
   spider_var_deprecated_int, /* update */
   1, /* def */
@@ -1455,7 +1456,7 @@ SPIDER_THDVAR_OVERRIDE_VALUE_FUNC(int, sts_mode)
 static MYSQL_THDVAR_INT(
   sts_sync, /* name */
   PLUGIN_VAR_RQCMDARG, /* opt */
-  "Table state synchronization in partitioned table.", /* comment */
+  "Table state synchronization in partitioned table", /* comment */
   NULL, /* check */
   spider_var_deprecated_int, /* update */
   0, /* def */
@@ -1475,7 +1476,7 @@ SPIDER_THDVAR_OVERRIDE_VALUE_FUNC(int, sts_sync)
 static MYSQL_THDVAR_INT(
   sts_bg_mode, /* name */
   PLUGIN_VAR_RQCMDARG, /* opt */
-  "Mode of table state confirmation at background.", /* comment */
+  "Mode of table state confirmation at background", /* comment */
   NULL, /* check */
   spider_var_deprecated_int, /* update */
   2, /* def */
@@ -1513,7 +1514,7 @@ SPIDER_THDVAR_VALUE_FUNC(double, ping_interval_at_trx_start)
 static MYSQL_THDVAR_INT(
   auto_increment_mode, /* name */
   PLUGIN_VAR_RQCMDARG, /* opt */
-  "Mode of auto increment.", /* comment */
+  "Mode of auto increment", /* comment */
   NULL, /* check */
   spider_var_deprecated_int, /* update */
   0, /* def */
@@ -1739,7 +1740,7 @@ static MYSQL_THDVAR_INT(
   "Connect retry count", /* comment */
   NULL, /* check */
   NULL, /* update */
-  1000, /* def */
+  2, /* def */
   0, /* min */
   2147483647, /* max */
   0 /* blk */
@@ -2040,7 +2041,7 @@ SPIDER_THDVAR_VALUE_FUNC(uint, internal_xa_id_type)
  */
 static MYSQL_THDVAR_INT(
   casual_read, /* name */
-  PLUGIN_VAR_RQCMDARG, /* opt */
+  PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_DEPRECATED, /* opt */
   "Read casually if it is possible", /* comment */
   NULL, /* check */
   spider_var_deprecated_int, /* update */
@@ -2213,11 +2214,11 @@ static uint spider_table_sts_thread_count;
 static MYSQL_SYSVAR_UINT(
   table_sts_thread_count,
   spider_table_sts_thread_count,
-  PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_READONLY,
-  "Static thread count of table sts",
+  PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_READONLY | PLUGIN_VAR_DEPRECATED,
+  "Deprecated parameter with no effect",
   NULL,
   NULL,
-  10,
+  1,
   1,
   4294967295U,
   0
@@ -2232,11 +2233,11 @@ static uint spider_table_crd_thread_count;
 static MYSQL_SYSVAR_UINT(
   table_crd_thread_count,
   spider_table_crd_thread_count,
-  PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_READONLY,
-  "Static thread count of table crd",
+  PLUGIN_VAR_RQCMDARG | PLUGIN_VAR_READONLY | PLUGIN_VAR_DEPRECATED,
+  "Deprecated parameter with no effect",
   NULL,
   NULL,
-  10,
+  1,
   1,
   4294967295U,
   0
@@ -2350,6 +2351,57 @@ static MYSQL_THDVAR_INT(
 );
 
 SPIDER_THDVAR_OVERRIDE_VALUE_FUNC(int, strict_group_by)
+
+/*
+ -1 : use table parameter
+  0 : do not strict
+  1 : do strict
+ */
+static MYSQL_THDVAR_BOOL(
+  direct_aggregate, /* name */
+  PLUGIN_VAR_RQCMDARG, /* opt */
+  "Whether to enable direct aggregate",
+  NULL, /* check */
+  NULL, /* update */
+  TRUE /* def */
+);
+
+SPIDER_THDVAR_VALUE_FUNC(bool, direct_aggregate)
+
+static MYSQL_THDVAR_BOOL(
+  disable_group_by_handler, /* name */
+  PLUGIN_VAR_OPCMDARG, /* opt */
+  "Disables the group by handler", /* comment */
+  NULL, /* check */
+  NULL, /* update */
+  FALSE /* def */
+);
+
+SPIDER_THDVAR_VALUE_FUNC(bool, disable_group_by_handler)
+
+static MYSQL_THDVAR_BOOL(
+  suppress_comment_ignored_warning,
+  PLUGIN_VAR_RQCMDARG,
+  "Whether to suppress warnings that table COMMENT or CONNECTION strings "
+  "are ignored due to specified table options",
+  NULL,
+  NULL,
+  FALSE
+);
+
+SPIDER_THDVAR_VALUE_FUNC(bool, suppress_comment_ignored_warning)
+
+static MYSQL_THDVAR_BOOL(
+  ignore_comments,
+  PLUGIN_VAR_RQCMDARG,
+  "Whether to unconditionally ignore COMMENT and CONNECTION strings "
+  "without checking whether table options are specified",
+  NULL,
+  NULL,
+  FALSE
+);
+
+SPIDER_THDVAR_VALUE_FUNC(bool, ignore_comments)
 
 static struct st_mysql_storage_engine spider_storage_engine =
 { MYSQL_HANDLERTON_INTERFACE_VERSION };
@@ -2465,6 +2517,10 @@ static struct st_mysql_sys_var* spider_system_variables[] = {
   MYSQL_SYSVAR(wait_timeout),
   MYSQL_SYSVAR(sync_sql_mode),
   MYSQL_SYSVAR(strict_group_by),
+  MYSQL_SYSVAR(direct_aggregate),
+  MYSQL_SYSVAR(disable_group_by_handler),
+  MYSQL_SYSVAR(suppress_comment_ignored_warning),
+  MYSQL_SYSVAR(ignore_comments),
   NULL
 };
 

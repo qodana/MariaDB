@@ -46,7 +46,7 @@ void Session_sysvars_tracker::vars_list::reinit()
   Copy the given list.
 
   @param  from    Source vars_list object.
-  @param  thd     THD handle to retrive the charset in use.
+  @param  thd     THD handle to retrieve the charset in use.
 
   @retval true  there is something to track
   @retval false nothing to track
@@ -117,7 +117,7 @@ bool Session_sysvars_tracker::vars_list::insert(const sys_var *svar)
   @param var_list        [IN]    System variable list.
   @param throw_error     [IN]    bool when set to true, returns an error
                                  in case of invalid/duplicate values.
-  @param char_set	 [IN]	 charecter set information used for string
+  @param char_set	 [IN]	 character set information used for string
 				 manipulations.
 
   @return
@@ -438,10 +438,12 @@ bool Session_sysvars_tracker::vars_list::store(THD *thd, String *buf)
     SHOW_VAR show;
     CHARSET_INFO *charset;
     size_t val_length, length;
+    mysql_mutex_lock(&LOCK_global_system_variables);
     mysql_mutex_lock(&LOCK_plugin);
     if (!*node->test_load)
     {
       mysql_mutex_unlock(&LOCK_plugin);
+      mysql_mutex_unlock(&LOCK_global_system_variables);
       continue;
     }
     sys_var *svar= node->m_svar;
@@ -454,13 +456,12 @@ bool Session_sysvars_tracker::vars_list::store(THD *thd, String *buf)
     show.name= svar->name.str;
     show.value= (char *) svar;
 
-    mysql_mutex_lock(&LOCK_global_system_variables);
     const char *value= get_one_variable(thd, &show, OPT_SESSION, SHOW_SYS, NULL,
                                         &charset, val_buf, &val_length);
-    mysql_mutex_unlock(&LOCK_global_system_variables);
 
     if (is_plugin)
       mysql_mutex_unlock(&LOCK_plugin);
+    mysql_mutex_unlock(&LOCK_global_system_variables);
 
     length= net_length_size(svar->name.length) +
       svar->name.length +
@@ -516,6 +517,22 @@ bool Session_sysvars_tracker::store(THD *thd, String *buf)
   return false;
 }
 
+/* Parse all session track system variables if not parsed yet. */
+void Session_sysvars_tracker::maybe_parse_all(THD *thd)
+{
+  if (!m_parsed)
+  {
+    DBUG_ASSERT(thd->variables.session_track_system_variables);
+    LEX_STRING tmp= { thd->variables.session_track_system_variables,
+                      strlen(thd->variables.session_track_system_variables) };
+    if (orig_list.parse_var_list(thd, tmp, true, thd->charset()))
+    {
+      orig_list.reinit();
+      return;
+    }
+    m_parsed= true;
+  }
+}
 
 /**
   Mark the system variable as changed.
@@ -530,18 +547,7 @@ void Session_sysvars_tracker::mark_as_changed(THD *thd, const sys_var *var)
   if (!is_enabled())
     return;
 
-  if (!m_parsed)
-  {
-    DBUG_ASSERT(thd->variables.session_track_system_variables);
-    LEX_STRING tmp= { thd->variables.session_track_system_variables,
-                      strlen(thd->variables.session_track_system_variables) };
-    if (orig_list.parse_var_list(thd, tmp, true, thd->charset()))
-    {
-      orig_list.reinit();
-      return;
-    }
-    m_parsed= true;
-  }
+  maybe_parse_all(thd);
 
   /*
     Check if the specified system variable is being tracked, if so
@@ -550,6 +556,23 @@ void Session_sysvars_tracker::mark_as_changed(THD *thd, const sys_var *var)
   if (orig_list.is_enabled() && (node= orig_list.insert_or_search(var)))
   {
     node->m_changed= true;
+    set_changed(thd);
+  }
+}
+
+/**
+  Mark all session tracking system variables as changed.
+*/
+void Session_sysvars_tracker::mark_all_as_changed(THD *thd)
+{
+  if (!is_enabled())
+    return;
+
+  maybe_parse_all(thd);
+
+  for (ulong i= 0; i < orig_list.size(); i++)
+  {
+    orig_list.at(i)->m_changed= true;
     set_changed(thd);
   }
 }
@@ -565,13 +588,13 @@ void Session_sysvars_tracker::mark_as_changed(THD *thd, const sys_var *var)
   @return Pointer to the key buffer.
 */
 
-uchar *Session_sysvars_tracker::sysvars_get_key(const char *entry,
-                                                size_t *length,
-                                                my_bool not_used __attribute__((unused)))
+const uchar *Session_sysvars_tracker::sysvars_get_key(const void *entry,
+                                                      size_t *length, my_bool)
 {
-  auto key=&(((sysvar_node_st *) entry)->m_svar->offset);
+  ptrdiff_t *key=
+      &((static_cast<const sysvar_node_st *>(entry))->m_svar->offset);
   *length= sizeof(*key);
-  return (uchar *) key;
+  return reinterpret_cast<const uchar *>(key);
 }
 
 
@@ -825,7 +848,7 @@ bool Transaction_state_tracker::store(THD *thd, String *buf)
            legal and equivalent syntax in MySQL, or START TRANSACTION
            sans options) will re-use any one-shots set up so far
            (with SET before the first transaction started, and with
-           all subsequent STARTs), except for WITH CONSISTANT SNAPSHOT,
+           all subsequent STARTs), except for WITH CONSISTENT SNAPSHOT,
            which will never be chained and only applies when explicitly
            given.
 
@@ -929,7 +952,7 @@ bool Transaction_state_tracker::store(THD *thd, String *buf)
         /*
           "READ ONLY" / "READ WRITE"
           We could transform this to SET TRANSACTION even when it occurs
-          in START TRANSACTION, but for now, we'll resysynthesize the original
+          in START TRANSACTION, but for now, we'll resynthesize the original
           command as closely as possible.
         */
         buf->append(STRING_WITH_LEN("SET TRANSACTION "));

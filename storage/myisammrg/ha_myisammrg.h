@@ -14,11 +14,6 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1335  USA */
 
-
-#ifdef USE_PRAGMA_INTERFACE
-#pragma interface			/* gcc class implementation */
-#endif
-
 /* class for the the myisam merge handler */
 
 #include <myisammrg.h>
@@ -34,7 +29,7 @@ class Mrg_child_def: public Sql_alloc
 {
   /* Remembered MERGE child def version.  See top comment in ha_myisammrg.cc */
   enum_table_ref_type m_child_table_ref_type;
-  ulong m_child_def_version;
+  ulonglong m_child_def_version;
 public:
   LEX_STRING db;
   LEX_STRING name;
@@ -44,12 +39,12 @@ public:
   {
     return m_child_table_ref_type;
   }
-  inline ulong get_child_def_version()
+  inline ulonglong get_child_def_version()
   {
     return m_child_def_version;
   }
   inline void set_child_def_version(enum_table_ref_type child_table_ref_type,
-                                    ulong version)
+                                    ulonglong version)
   {
     m_child_table_ref_type= child_table_ref_type;
     m_child_def_version= version;
@@ -82,7 +77,6 @@ public:
 
   ha_myisammrg(handlerton *hton, TABLE_SHARE *table_arg);
   ~ha_myisammrg();
-  const char *index_type(uint key_number) override;
   ulonglong table_flags() const override
   {
     return (HA_REC_NOT_IN_SEQ | HA_AUTO_PART_KEY | HA_NO_TRANSACTIONS |
@@ -170,4 +164,45 @@ public:
   int create_mrg(const char *name, HA_CREATE_INFO *create_info);
   MYRG_INFO *myrg_info() { return file; }
   TABLE *table_ptr()  { return table; }
+
+  /*
+    Make an exact copy an identifier on children_mem_root.
+
+    @param src    - The original identifier
+    @return       - {NULL,0} in case of EOM,
+                    or a non-NULL LEX_STRING with the identifier copy.
+  */
+  LEX_STRING make_child_ident(const LEX_CSTRING &src)
+  {
+    return lex_string_strmake_root(&children_mem_root, src.str, src.length);
+  }
+
+  /*
+    Make an exact copy or a lower-cased copy of an identifier
+    on children mem_root.
+
+    @param src    - The original identifier
+    @param casedn - If the name should be converted to lower case
+    @return       - {NULL,0} in case of EOM,
+                    or a non-NULL LEX_STRING with the identifier copy.
+  */
+  LEX_STRING make_child_ident_opt_casedn(const LEX_CSTRING &src, bool casedn)
+  {
+    return casedn ? lex_string_casedn_root(&children_mem_root,
+                                           &my_charset_utf8mb3_general_ci,
+                                           src.str, src.length) :
+                    make_child_ident(src);
+  }
+
+  /*
+    Make an optionally lower-cases filename_to_tablename-decoded identifier
+    in children mem_root.
+  */
+  LEX_STRING make_child_ident_filename_to_tablename(const char *src,
+                                                    bool casedn)
+  {
+    char buf[NAME_LEN];
+    size_t len= filename_to_tablename(src, buf, sizeof(buf));
+    return make_child_ident_opt_casedn({buf, len}, casedn);
+  }
 };

@@ -13,11 +13,10 @@
 
 # Re-create the undo log tablespaces after slow shutdown
 SET GLOBAL innodb_fast_shutdown=0;
-let $restart_parameters="--innodb_undo_tablespaces=2";
+let $restart_parameters=--innodb_undo_tablespaces=2;
 --source include/restart_mysqld.inc
 
 SET GLOBAL innodb_undo_log_truncate = 1;
-SET GLOBAL innodb_purge_rseg_truncate_frequency = 1;
 
 let SEARCH_FILE = $MYSQLTEST_VARDIR/log/mysqld.1.err;
 

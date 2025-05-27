@@ -282,11 +282,18 @@ enum wsrep::provider::status Wsrep_client_service::replay()
     original THD state during replication event applying.
    */
   THD *replayer_thd= new THD(true, true);
+  // Replace the security context of the replayer with the security context
+  // of the original THD. Since security context class doesn't have proper
+  // copy constructors, we need to store the original one and set it back
+  // before destruction so that THD destruction doesn't cause double-free
+  // on the replaced security context.
+  Security_context old_ctx = replayer_thd->main_security_ctx;
+  replayer_thd->main_security_ctx = m_thd->main_security_ctx;
   replayer_thd->thread_stack= m_thd->thread_stack;
   replayer_thd->real_id= pthread_self();
   replayer_thd->prior_thr_create_utime=
       replayer_thd->start_utime= microsecond_interval_timer();
-  replayer_thd->set_command(COM_SLEEP);
+  replayer_thd->mark_connection_idle();
   replayer_thd->reset_for_next_command(true);
 
   enum wsrep::provider::status ret;
@@ -298,6 +305,13 @@ enum wsrep::provider::status Wsrep_client_service::replay()
     replayer_service.replay_status(ret);
   }
 
+  // In Galera we allow only InnoDB sequences, thus
+  // sequence table updates are in writeset.
+  // Binlog cache needs reset so that binlog_close
+  // does not write cache to binlog file yet.
+  binlog_reset_cache(m_thd);
+
+  replayer_thd->main_security_ctx = old_ctx;
   delete replayer_thd;
   DBUG_RETURN(ret);
 }
@@ -360,7 +374,7 @@ int Wsrep_client_service::bf_rollback()
               wsrep_thd_transaction_state_str(m_thd),
               m_thd->killed);
 
-  /* If client is quiting all below will be done in THD::cleanup()
+  /* If client is quitting all below will be done in THD::cleanup()
      TODO: why we need this any other case?  */
   if (m_thd->wsrep_cs().state() != wsrep::client_state::s_quitting)
   {

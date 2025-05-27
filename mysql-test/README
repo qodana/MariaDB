@@ -5,7 +5,7 @@ Some tests are known to fail on some platforms or be otherwise unreliable.
 In the file collections/smoke_test there is a list of tests that are
 expected to be stable.
 
-In general you do not have to have to do "make install", and you can have
+In general you do not have to do "make install", and you can have
 a co-existing MariaDB installation, the tests will not conflict with it.
 To run the tests in a source directory, you must do "make" first.
 
@@ -84,8 +84,8 @@ edit the test result to the correct results so that we can verify that
 the bug is corrected in future releases.
 
 If you want to submit your test case you can send it
-to maria-developers@lists.launchpad.net or attach it to a bug report on
-https://mariadb.org/jira/.
+to developers@lists.mariadb.org or attach it to a bug report on
+http://mariadb.org/jira/.
 
 If the test case is really big or if it contains 'not public' data,
 then put your .test file and .result file(s) into a tar.gz archive,

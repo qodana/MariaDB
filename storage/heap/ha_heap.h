@@ -15,11 +15,6 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1335  USA */
 
-
-#ifdef USE_PRAGMA_INTERFACE
-#pragma interface			/* gcc class implementation */
-#endif
-
 /* class for the the heap handler */
 
 #include <heap.h>
@@ -38,11 +33,6 @@ public:
   ha_heap(handlerton *hton, TABLE_SHARE *table);
   ~ha_heap() = default;
   handler *clone(const char *name, MEM_ROOT *mem_root) override;
-  const char *index_type(uint inx) override
-  {
-    return ((table_share->key_info[inx].algorithm == HA_KEY_ALG_BTREE) ?
-            "BTREE" : "HASH");
-  }
   /* Rows also use a fixed-size format */
   enum row_type get_row_type() const override { return ROW_TYPE_FIXED; }
   ulonglong table_flags() const override
@@ -59,7 +49,7 @@ public:
             HA_READ_NEXT | HA_READ_PREV | HA_READ_ORDER | HA_READ_RANGE :
             HA_ONLY_WHOLE_INDEX | HA_KEY_SCAN_NOT_ROR);
   }
-  const key_map *keys_to_use_for_scanning() override { return &btree_keys; }
+  const key_map *keys_to_use_for_scanning() override;
   uint max_supported_keys()          const override { return MAX_KEY; }
   uint max_supported_key_part_length() const override { return MAX_KEY_LENGTH; }
   IO_AND_CPU_COST scan_time() override;
@@ -99,8 +89,8 @@ public:
   int external_lock(THD *thd, int lock_type) override;
   int delete_all_rows(void) override;
   int reset_auto_increment(ulonglong value) override;
-  int disable_indexes(uint mode) override;
-  int enable_indexes(uint mode) override;
+  int disable_indexes(key_map map, bool persist) override;
+  int enable_indexes(key_map map, bool persist) override;
   int indexes_are_disabled(void) override;
   ha_rows records_in_range(uint inx, const key_range *start_key,
                            const key_range *end_key, page_range *pages) override;
@@ -121,5 +111,4 @@ public:
   int find_unique_row(uchar *record, uint unique_idx) override;
 private:
   void update_key_stats();
-  void set_keys_for_scanning(void);
 };

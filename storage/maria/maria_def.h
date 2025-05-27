@@ -73,6 +73,13 @@ C_MODE_START
 #define MARIA_MIN_PAGE_CACHE_SIZE       (8192L*16L)
 
 /*
+  File align size (must be power of 2) used for pre-allocation of
+  temporary table space. It is used to reduce the number of calls to
+  update_tmp_file_size for static and dynamic rows.
+*/
+#define MARIA_TRACK_INCREMENT_SIZE	        8192
+
+/*
   In the following macros '_keyno_' is 0 .. keys-1.
   If there can be more keys than bits in the key_map, the highest bit
   is for all upper keys. They cannot be switched individually.
@@ -155,7 +162,7 @@ typedef struct st_maria_info
 } MARIA_INFO;
 
 struct st_maria_share;
-struct st_maria_handler;                        /* For referense */
+struct st_maria_handler;                        /* For reference */
 struct st_maria_keydef;
 
 struct st_maria_key                 /* Internal info about a key */
@@ -389,6 +396,7 @@ typedef struct st_maria_sort_param
   MEM_ROOT wordroot;
   uchar *record;
   MY_TMPDIR *tmpdir;
+  HA_CHECK *check_param;
 
   /* 
     The next two are used to collect statistics, see maria_update_key_parts for
@@ -405,7 +413,7 @@ typedef struct st_maria_sort_param
   my_bool calc_checksum;                /* calculate table checksum */
   size_t rec_buff_size;
 
-  int (*key_cmp)(struct st_maria_sort_param *, const void *, const void *);
+  int (*key_cmp)(void *, const void *, const void *);
   int (*key_read)(struct st_maria_sort_param *, uchar *);
   int (*key_write)(struct st_maria_sort_param *, const uchar *);
   void (*lock_in_memory)(HA_CHECK *);
@@ -455,7 +463,7 @@ typedef struct st_maria_state_info
   my_off_t dellink;			/* Link to next removed block */
   pgcache_page_no_t first_bitmap_with_space;
   ulonglong auto_increment;
-  TrID create_trid;                     /* Minum trid for file */
+  TrID create_trid;                     /* Minimum trid for file */
   TrID last_change_trn;                 /* selfdescriptive */
   ulong update_count;			/* Updated for each write lock */
   ulong status;
@@ -694,6 +702,7 @@ typedef struct st_maria_share
   LIST *open_list;			/* Tables open with this share */
   PAGECACHE *pagecache;			/* ref to the current key cache */
   MARIA_DECODE_TREE *decode_trees;
+  int crash_error;                      /* Reason for marked crashed */
   /*
     Previous auto-increment value. Used to verify if we can restore the
     auto-increment counter if we have to abort an insert (duplicate key).
@@ -745,7 +754,7 @@ typedef struct st_maria_share
   my_off_t (*recpos_to_keypos)(struct st_maria_share *share, my_off_t pos);
   my_bool (*row_is_visible)(MARIA_HA *);
 
-  /* Mapings to read/write the data file */
+  /* Mappings to read/write the data file */
   size_t (*file_read)(MARIA_HA *, uchar *, size_t, my_off_t, myf);
   size_t (*file_write)(MARIA_HA *, const uchar *, size_t, my_off_t, myf);
   /* query cache invalidator for merged tables */
@@ -761,6 +770,11 @@ typedef struct st_maria_share
   ulong max_pack_length;
   ulong state_diff_length;
   uint rec_reflength;			/* rec_reflength in use now */
+  /*
+    Extra flag to use for my_malloc(); set to MY_THREAD_SPECIFIC for temporary
+    tables whose memory allocation should be accounted to the current THD.
+  */
+  uint malloc_flag;
   uint keypage_header;
   uint32 ftkeys;			/* Number of distinct full-text keys
 						   + 1 */
@@ -778,6 +792,14 @@ typedef struct st_maria_share
   myf write_flag;
   enum data_file_type data_file_type;
   enum pagecache_page_type page_type;   /* value depending transactional */
+
+  /*
+    tracked will cause lost bytes (not aligned) but this is ok as it is always
+    used with tmp_file_tracking if set
+  */
+  my_bool tracked;                      /* Tracked table (always internal) */
+  struct tmp_file_tracking track_data,track_index;
+
   /**
      if Checkpoint looking at table; protected by close_lock or THR_LOCK_maria
   */
@@ -970,7 +992,7 @@ struct st_maria_handler
   my_off_t last_search_keypage;		/* Last keypage when searching */
 
   /*
-    QQ: the folloing two xxx_length fields should be removed,
+    QQ: the following two xxx_length fields should be removed,
      as they are not compatible with parallel repair
   */
   ulong packed_length, blob_length;	/* Length of found, packed record */
@@ -989,7 +1011,7 @@ struct st_maria_handler
   int lastinx;				/* Last used index */
   uint last_rkey_length;		/* Last length in maria_rkey() */
   uint *last_rtree_keypos;              /* Last key positions for rtrees */
-  uint bulk_insert_ref_length;          /* Lenght of row ref during bi */
+  uint bulk_insert_ref_length;          /* Length of row ref during bi */
   uint non_flushable_state;
   enum ha_rkey_function last_key_func;	/* CONTAIN, OVERLAP, etc */
   uint save_lastkey_data_length;
@@ -1135,19 +1157,23 @@ struct ha_table_option_struct
 #define int4store_aligned(A,B) int4store((A),(B))
 
 #define maria_mark_crashed(x) do{(x)->s->state.changed|= STATE_CRASHED; \
+    (x)->s->crash_error= my_errno;                                      \
     DBUG_PRINT("error", ("Marked table crashed"));                      \
   }while(0)
 #define maria_mark_crashed_share(x)                                     \
   do{(x)->state.changed|= STATE_CRASHED;                                \
+    (x)->crash_error= my_errno;                                         \
     DBUG_PRINT("error", ("Marked table crashed"));                      \
   }while(0)
 #define maria_mark_crashed_on_repair(x) do{(x)->s->state.changed|=      \
       STATE_CRASHED|STATE_CRASHED_ON_REPAIR;                            \
     (x)->update|= HA_STATE_CHANGED;                                     \
+    (x)->s->crash_error= my_errno;                                      \
     DBUG_PRINT("error", ("Marked table crashed on repair"));            \
   }while(0)
 #define maria_mark_in_repair(x) do{(x)->s->state.changed|=      \
       STATE_CRASHED | STATE_IN_REPAIR;                          \
+    (x)->s->crash_error= my_errno;                              \
     (x)->update|= HA_STATE_CHANGED;                             \
     DBUG_PRINT("error", ("Marked table crashed for repair"));   \
   }while(0)
@@ -1674,14 +1700,6 @@ my_bool _ma_write_abort_default(MARIA_HA *info);
 int maria_delete_table_files(const char *name, my_bool temporary,
                              myf flags)__attribute__((visibility("default"))) ;
 
-
-/*
-  This cannot be in my_base.h as it clashes with HA_SPATIAL.
-  But it was introduced for Aria engine, and is only used there.
-  So it can safely stay here, only visible to Aria
-*/
-#define HA_RTREE_INDEX	        16384	/* For RTREE search */
-
 #define MARIA_FLUSH_DATA  1
 #define MARIA_FLUSH_INDEX 2
 int _ma_flush_table_files(MARIA_HA *info, uint flush_data_or_index,
@@ -1773,7 +1791,10 @@ extern my_bool ma_yield_and_check_if_killed(MARIA_HA *info, int inx);
 extern my_bool ma_killed_standalone(MARIA_HA *);
 
 extern uint _ma_file_callback_to_id(void *callback_data);
+extern uint _ma_write_flags_callback(void *callback_data, myf flags);
 extern void free_maria_share(MARIA_SHARE *share);
+extern int _ma_update_tmp_file_size(struct tmp_file_tracking *track,
+                                    ulonglong file_size);
 
 static inline void unmap_file(MARIA_HA *info __attribute__((unused)))
 {
@@ -1792,6 +1813,7 @@ static inline void decrement_share_in_trans(MARIA_SHARE *share)
   else
     mysql_mutex_unlock(&share->intern_lock);
 }
+
 C_MODE_END
 #endif
 

@@ -58,6 +58,11 @@ typedef ib_id_t		index_id_t;
 extern const byte trx_id_max_bytes[8];
 extern const byte timestamp_max_bytes[7];
 
+#define IS_MAX_TIMESTAMP(A)                                 \
+  (((unsigned char*) (A))[1] == 0xff &&                     \
+    memcmp((void*) (A), timestamp_max_bytes, 7) == 0)
+
+
 /** Error to ignore when we load table dictionary into memory. However,
 the table and index will be marked as "corrupted", and caller will
 be responsible to deal with corrupted table or index.
@@ -106,7 +111,7 @@ struct table_name_t
 	table_name_t(char* name) : m_name(name) {}
 
 	/** @return the end of the schema name */
-	const char* dbend() const
+	const char* dbend() const noexcept
 	{
 		const char* sep = strchr(m_name, '/');
 		ut_ad(sep);
@@ -114,11 +119,19 @@ struct table_name_t
 	}
 
 	/** @return the length of the schema name, in bytes */
-	size_t dblen() const { return size_t(dbend() - m_name); }
+	size_t dblen() const noexcept
+	{
+		const char *end= dbend();
+		return UNIV_LIKELY(end != nullptr) ? size_t(end - m_name) : 0;
+	}
 
 	/** Determine the filename-safe encoded table name.
 	@return	the filename-safe encoded table name */
-	const char* basename() const { return dbend() + 1; }
+	const char* basename() const noexcept
+	{
+		const char *end= dbend();
+		return UNIV_LIKELY(end != nullptr) ? end + 1 : nullptr;
+	}
 
 	/** The start of the table basename suffix for partitioned tables */
 	static const char part_suffix[4];
@@ -146,7 +159,7 @@ struct table_name_t
 Note: the spatial status is part of persistent undo log,
 so we should not modify the values in MySQL 5.7 */
 enum spatial_status_t {
-	/* Unkown status (undo format in 5.7.9) */
+	/* Unknown status (undo format in 5.7.9) */
 	SPATIAL_UNKNOWN = 0,
 
 	/** Not used in gis index. */

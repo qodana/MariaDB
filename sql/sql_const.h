@@ -29,7 +29,7 @@
 /* extra 4+4 bytes for slave tmp tables */
 #define MAX_DBKEY_LENGTH (NAME_LEN*2+1+1+4+4)
 #define MAX_ALIAS_NAME 256
-#define MAX_FIELD_NAME (NAME_LEN+1)             /* Max colum name length +1 */
+#define MAX_FIELD_NAME (NAME_LEN+1)             /* Max column name length +1 */
 #define MAX_SYS_VAR_LENGTH 32
 #define MAX_KEY MAX_INDEXES                     /* Max used keys */
 #define MAX_REF_PARTS 32			/* Max parts used as ref */
@@ -180,21 +180,26 @@
 #define MYSQLD_NET_RETRY_COUNT  10	///< Abort read after this many int.
 #endif
 
-#define QUERY_ALLOC_BLOCK_SIZE		16384
-#define QUERY_ALLOC_PREALLOC_SIZE   	24576
+/*
+  Allocations with MEM_ROOT. We should try to keep these as powers of 2
+  and not higher than 32768 to get full benefit of allocators like
+  tcmalloc that will for these use a local heap without locks.
+*/
+
+#define QUERY_ALLOC_BLOCK_SIZE		32768
+#define QUERY_ALLOC_PREALLOC_SIZE   	32768 /* 65536 could be better */
 #define TRANS_ALLOC_BLOCK_SIZE		8192
 #define TRANS_ALLOC_PREALLOC_SIZE	4096
 #define RANGE_ALLOC_BLOCK_SIZE		4096
 #define ACL_ALLOC_BLOCK_SIZE		1024
 #define UDF_ALLOC_BLOCK_SIZE		1024
-#define TABLE_ALLOC_BLOCK_SIZE		1024
+#define TABLE_PREALLOC_BLOCK_SIZE	8192
+#define TABLE_ALLOC_BLOCK_SIZE		4096
 #define WARN_ALLOC_BLOCK_SIZE		2048
 #define WARN_ALLOC_PREALLOC_SIZE	1024
-/*
-  Note that if we are using 32K or less, then TCmalloc will use a local
-  heap without locks!
-*/
-#define SHOW_ALLOC_BLOCK_SIZE           (32768-MALLOC_OVERHEAD)
+#define TMP_TABLE_BLOCK_SIZE            16384
+#define TMP_TABLE_PREALLOC_SIZE         32768
+#define SHOW_ALLOC_BLOCK_SIZE           32768
 
 /*
   The following parameters is to decide when to use an extra cache to
@@ -206,12 +211,12 @@
 
 /*
   The lower bound of accepted rows when using filter.
-  This is used to ensure that filters are not too agressive.
+  This is used to ensure that filters are not too aggressive.
 */
 #define MIN_ROWS_AFTER_FILTERING 1.0
 
 /**
-  Number of rows in a reference table when refered through a not unique key.
+  Number of rows in a reference table when referred through a not unique key.
   This value is only used when we don't know anything about the key
   distribution.
 */
@@ -258,6 +263,6 @@
 */
 #define MAX_TIME_ZONE_NAME_LENGTH       (NAME_LEN + 1)
 
-#define SP_PSI_STATEMENT_INFO_COUNT 19
+#define SP_PSI_STATEMENT_INFO_COUNT 23
 
 #endif /* SQL_CONST_INCLUDED */

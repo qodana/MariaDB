@@ -25,7 +25,7 @@ Database monitor counter interfaces
 Created 12/9/2009 Jimmy Yang
 *******************************************************/
 
-#include "buf0buf.h"
+#include "buf0flu.h"
 #include "dict0mem.h"
 #include "lock0lock.h"
 #include "mach0data.h"
@@ -136,7 +136,7 @@ static monitor_info_t	innodb_counter_info[] =
 	 "Number of row locks currently being waited for"
 	 " (innodb_row_lock_current_waits)",
 	 static_cast<monitor_type_t>(
-	 MONITOR_EXISTING | MONITOR_DEFAULT_ON),
+	 MONITOR_EXISTING | MONITOR_DISPLAY_CURRENT | MONITOR_DEFAULT_ON),
 	 MONITOR_DEFAULT_START, MONITOR_OVLD_ROW_LOCK_CURRENT_WAIT},
 
 	{"lock_row_lock_time", "lock",
@@ -363,11 +363,6 @@ static monitor_info_t	innodb_counter_info[] =
 	 MONITOR_NONE,
 	 MONITOR_DEFAULT_START, MONITOR_LRU_GET_FREE_LOOPS},
 
-	{"buffer_LRU_get_free_waits", "buffer",
-	 "Total sleep waits in LRU get free.",
-	 MONITOR_NONE,
-	 MONITOR_DEFAULT_START, MONITOR_LRU_GET_FREE_WAITS},
-
 	{"buffer_flush_avg_page_rate", "buffer",
 	 "Average number of pages at which flushing is happening",
 	 MONITOR_NONE,
@@ -470,11 +465,6 @@ static monitor_info_t	innodb_counter_info[] =
 	 static_cast<monitor_type_t>(
 	 MONITOR_EXISTING | MONITOR_DEFAULT_ON),
 	 MONITOR_DEFAULT_START, MONITOR_LRU_BATCH_EVICT_TOTAL_PAGE},
-
-	{"buffer_LRU_single_flush_failure_count", "Buffer",
-	 "Number of times attempt to flush a single page from LRU failed",
-	 MONITOR_NONE,
-	 MONITOR_DEFAULT_START, MONITOR_LRU_SINGLE_FLUSH_FAILURE_COUNT},
 
 	{"buffer_LRU_get_free_search", "Buffer",
 	 "Number of searches performed for a clean page",
@@ -1298,12 +1288,13 @@ srv_mon_process_existing_counter(
 
 	/* innodb_buffer_pool_pages_total */
 	case MONITOR_OVLD_BUF_POOL_PAGE_TOTAL:
-		value = buf_pool.get_n_pages();
+	case MONITOR_OVLD_BUFFER_POOL_SIZE:
+		value = buf_pool.curr_size();
 		break;
 
 	/* innodb_buffer_pool_pages_misc */
 	case MONITOR_OVLD_BUF_POOL_PAGE_MISC:
-		value = buf_pool.get_n_pages()
+		value = buf_pool.curr_size()
 			- UT_LIST_GET_LEN(buf_pool.LRU)
 			- UT_LIST_GET_LEN(buf_pool.free);
 		break;
@@ -1420,10 +1411,6 @@ srv_mon_process_existing_counter(
 	/* innodb_page_size */
 	case MONITOR_OVLD_SRV_PAGE_SIZE:
 		value = srv_page_size;
-		break;
-
-	case MONITOR_OVLD_BUFFER_POOL_SIZE:
-		value = srv_buf_pool_size;
 		break;
 
 	/* innodb_row_lock_current_waits */
@@ -1592,7 +1579,7 @@ srv_mon_process_existing_counter(
 			    & MONITOR_DISPLAY_CURRENT) {
 				MONITOR_SET(monitor_id, value);
 			} else {
-				/* Most status counters are montonically
+				/* Most status counters are monotonically
 				increasing, no need to update their
 				minimum values. Only do so
 				if "update_min" set to TRUE */

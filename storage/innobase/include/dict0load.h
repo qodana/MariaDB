@@ -35,20 +35,18 @@ Created 4/24/1996 Heikki Tuuri
 #include "btr0types.h"
 
 #include <deque>
+#include <set>
 
 /** A stack of table names related through foreign key constraints */
 typedef std::deque<const char*, ut_allocator<const char*> >	dict_names_t;
 
-/** Open each tablespace found in the data dictionary.
+/** Check MAX(SPACE) FROM SYS_TABLES and store it in fil_system.
+Open each data file if an encryption plugin has been loaded.
 
-In a crash recovery we already have some tablespace objects created from
-processing the REDO log. We will compare the
-space_id information in the data dictionary to what we find in the
-tablespace file. In addition, more validation will be done if recovery
-was needed and force_recovery is not set.
-
-We also scan the biggest space id, and store it to fil_system. */
-void dict_load_tablespaces();
+@param spaces  set of tablespace files to open
+@param upgrade whether we need to invoke ibuf_upgrade() */
+void dict_load_tablespaces(const std::set<uint32_t> *spaces= nullptr,
+                           bool upgrade= false);
 
 /** Make sure the data_file_name is saved in dict_table_t if needed.
 @param[in,out]	table		Table object */
@@ -215,4 +213,12 @@ dict_process_sys_foreign_col_rec(
 					in referenced table */
 	ulint*		pos);		/*!< out: column position */
 
+/** This function gets the next system table record as it scans
+the table.
+@param pcur persistent cursor
+@param mtr  mini-transaction
+@return the next record if found
+@retval nullptr at the end of the table */
+const rec_t*
+dict_getnext_system_low(btr_pcur_t *pcur, mtr_t *mtr);
 #endif

@@ -14,11 +14,6 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1335  USA */
 
-
-#ifdef USE_PRAGMA_INTERFACE
-#pragma interface			/* gcc class implementation */
-#endif
-
 /* class for the the myisam handler */
 
 #include <myisam.h>
@@ -48,14 +43,12 @@ class ha_myisam final : public handler
   char    *data_file_name, *index_file_name;
   bool can_enable_indexes;
   int repair(THD *thd, HA_CHECK &param, bool optimize);
-  void setup_vcols_for_repair(HA_CHECK *param);
-  void restore_vcos_after_repair();
+  int setup_vcols_for_repair(HA_CHECK *param);
 
  public:
   ha_myisam(handlerton *hton, TABLE_SHARE *table_arg);
   ~ha_myisam() = default;
   handler *clone(const char *name, MEM_ROOT *mem_root) override;
-  const char *index_type(uint key_number) override;
   ulonglong table_flags() const override { return int_table_flags; }
   int index_init(uint idx, bool sorted) override;
   int index_end() override;
@@ -111,8 +104,8 @@ class ha_myisam final : public handler
   int external_lock(THD *thd, int lock_type) override;
   int delete_all_rows(void) override;
   int reset_auto_increment(ulonglong value) override;
-  int disable_indexes(uint mode) override;
-  int enable_indexes(uint mode) override;
+  int disable_indexes(key_map map, bool persist) override;
+  int enable_indexes(key_map map, bool persist) override;
   int indexes_are_disabled(void) override;
   void start_bulk_insert(ha_rows rows, uint flags) override;
   int end_bulk_insert() override;
@@ -147,13 +140,11 @@ class ha_myisam final : public handler
     override;
   bool check_if_incompatible_data(HA_CREATE_INFO *info, uint table_changes)
     override;
-#ifdef HAVE_QUERY_CACHE
   my_bool register_query_cache_table(THD *thd, const char *table_key,
                                      uint key_length,
                                      qc_engine_callback
                                      *engine_callback,
                                      ulonglong *engine_data) override;
-#endif
   /**
    * Multi Range Read interface
    */

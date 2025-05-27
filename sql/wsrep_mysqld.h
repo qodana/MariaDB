@@ -131,7 +131,8 @@ enum enum_wsrep_mode {
   WSREP_MODE_REPLICATE_MYISAM= (1ULL << 3),
   WSREP_MODE_REPLICATE_ARIA= (1ULL << 4),
   WSREP_MODE_DISALLOW_LOCAL_GTID= (1ULL << 5),
-  WSREP_MODE_BF_MARIABACKUP= (1ULL << 6)
+  WSREP_MODE_BF_MARIABACKUP= (1ULL << 6),
+  WSREP_MODE_APPLIER_SKIP_FK_CHECKS_IN_IST= (1ULL << 7)
 };
 
 // Streaming Replication
@@ -147,7 +148,6 @@ extern const char *wsrep_SR_store_types[];
 
 // MySQL status variables
 extern my_bool     wsrep_connected;
-extern my_bool     wsrep_ready;
 extern const char* wsrep_cluster_state_uuid;
 extern long long   wsrep_cluster_conf_id;
 extern const char* wsrep_cluster_status;
@@ -162,11 +162,12 @@ extern char*       wsrep_cluster_capabilities;
 
 int  wsrep_show_status(THD *thd, SHOW_VAR *var, void *buff,
                        system_status_var *status_var, enum_var_type scope);
-int  wsrep_show_ready(THD *thd, SHOW_VAR *var, char *buff);
+int  wsrep_show_ready(THD *thd, SHOW_VAR *var, void *buff,
+                      system_status_var *, enum_var_type);
 void wsrep_free_status(THD *thd);
 void wsrep_update_cluster_state_uuid(const char* str);
 
-/* Filters out --wsrep-new-cluster oprtion from argv[]
+/* Filters out --wsrep-new-cluster option from argv[]
  * should be called in the very beginning of main() */
 void wsrep_filter_new_cluster (int* argc, char* argv[]);
 
@@ -356,7 +357,7 @@ int wsrep_to_isolation_begin(THD *thd, const char *db_, const char *table_,
                              const wsrep::key_array *fk_tables= nullptr,
                              const HA_CREATE_INFO* create_info= nullptr);
 
-bool wsrep_should_replicate_ddl(THD* thd, const handlerton *db_type);
+bool wsrep_should_replicate_ddl(THD* thd, const handlerton *hton);
 bool wsrep_should_replicate_ddl_iterate(THD* thd, const TABLE_LIST* table_list);
 
 void wsrep_to_isolation_end(THD *thd);
@@ -503,17 +504,10 @@ void wsrep_init_gtid();
 bool wsrep_check_gtid_seqno(const uint32&, const uint32&, uint64&);
 bool wsrep_get_binlog_gtid_seqno(wsrep_server_gtid_t&);
 
-typedef struct wsrep_key_arr
-{
-    wsrep_key_t* keys;
-    size_t       keys_len;
-} wsrep_key_arr_t;
-bool wsrep_prepare_keys_for_isolation(THD*              thd,
-                                      const char*       db,
-                                      const char*       table,
-                                      const TABLE_LIST* table_list,
-                                      wsrep_key_arr_t*  ka);
-void wsrep_keys_free(wsrep_key_arr_t* key_arr);
+int wsrep_append_table_keys(THD* thd,
+                            TABLE_LIST* first_table,
+                            TABLE_LIST* table_list,
+                            Wsrep_service_key_type key_type);
 
 extern void
 wsrep_handle_mdl_conflict(MDL_context *requestor_ctx,
@@ -600,6 +594,13 @@ wsrep::key wsrep_prepare_key_for_toi(const char* db, const char* table,
 
 void wsrep_wait_ready(THD *thd);
 void wsrep_ready_set(bool ready_value);
+
+/**
+ * Returns true if the given list of tables contains at least one
+ * non-temporary table.
+ */
+bool wsrep_table_list_has_non_temp_tables(THD *thd, TABLE_LIST *tables);
+
 #else /* !WITH_WSREP */
 
 /* These macros are needed to compile MariaDB without WSREP support
@@ -615,7 +616,6 @@ void wsrep_ready_set(bool ready_value);
 #define wsrep_thr_deinit() do {} while(0)
 #define wsrep_init_globals() do {} while(0)
 #define wsrep_create_appliers(X) do {} while(0)
-#define wsrep_should_replicate_ddl(X,Y) (1)
 #define wsrep_cluster_address_exists() (false)
 #define WSREP_MYSQL_DB (0)
 #define WSREP_TO_ISOLATION_BEGIN(db_, table_, table_list_) do { } while(0)

@@ -986,7 +986,7 @@ i_s_cmp_fill_low(
 		mutex.  Thus, some operation in page0zip.cc could
 		increment a counter between the time we read it and
 		clear it.  We could introduce mutex protection, but it
-		could cause a measureable performance hit in
+		could cause a measurable performance hit in
 		page0zip.cc. */
 		table->field[1]->store(zip_stat->compressed, true);
 		table->field[2]->store(zip_stat->compressed_ok, true);
@@ -2223,7 +2223,7 @@ i_s_fts_deleted_generic_fill(
 		DBUG_RETURN(0);
 	} else if (!dict_table_has_fts_index(user_table)
 		   || !user_table->is_readable()) {
-		dict_table_close(user_table, false, thd, mdl_ticket);
+		dict_table_close(user_table, thd, mdl_ticket);
 		DBUG_RETURN(0);
 	}
 
@@ -2238,7 +2238,7 @@ i_s_fts_deleted_generic_fill(
 
 	fts_table_fetch_doc_ids(trx, &fts_table, deleted);
 
-	dict_table_close(user_table, false, thd, mdl_ticket);
+	dict_table_close(user_table, thd, mdl_ticket);
 
 	trx->free();
 
@@ -2571,7 +2571,7 @@ i_s_fts_index_cache_fill(
 	}
 
 	if (!user_table->fts || !user_table->fts->cache) {
-		dict_table_close(user_table, false, thd, mdl_ticket);
+		dict_table_close(user_table, thd, mdl_ticket);
 		DBUG_RETURN(0);
 	}
 
@@ -2596,7 +2596,7 @@ i_s_fts_index_cache_fill(
 	}
 
 	mysql_mutex_unlock(&cache->lock);
-	dict_table_close(user_table, false, thd, mdl_ticket);
+	dict_table_close(user_table, thd, mdl_ticket);
 
 	DBUG_RETURN(ret);
 }
@@ -3013,7 +3013,7 @@ i_s_fts_index_table_fill(
 		}
 	}
 
-	dict_table_close(user_table, false, thd, mdl_ticket);
+	dict_table_close(user_table, thd, mdl_ticket);
 
 	ut_free(conv_str.f_str);
 
@@ -3138,7 +3138,7 @@ i_s_fts_config_fill(
 	}
 
 	if (!dict_table_has_fts_index(user_table)) {
-		dict_table_close(user_table, false, thd, mdl_ticket);
+		dict_table_close(user_table, thd, mdl_ticket);
 		DBUG_RETURN(0);
 	}
 
@@ -3195,7 +3195,7 @@ i_s_fts_config_fill(
 
 	fts_sql_commit(trx);
 
-	dict_table_close(user_table, false, thd, mdl_ticket);
+	dict_table_close(user_table, thd, mdl_ticket);
 
 	trx->free();
 
@@ -3381,7 +3381,7 @@ static int i_s_innodb_stats_fill(THD *thd, TABLE_LIST * tables, Item *)
 		DBUG_RETURN(0);
 	}
 
-	buf_stats_get_pool_info(&info);
+	buf_pool.get_info(&info);
 
 	table = tables->table;
 
@@ -3925,87 +3925,37 @@ and fetch information to information schema tables: INNODB_BUFFER_PAGE.
 @return 0 on success, 1 on failure */
 static int i_s_innodb_buffer_page_fill(THD *thd, TABLE_LIST *tables, Item *)
 {
-	int			status	= 0;
-	mem_heap_t*		heap;
+  DBUG_ENTER("i_s_innodb_buffer_page_fill");
+  RETURN_IF_INNODB_NOT_STARTED(tables->schema_table_name.str);
 
-	DBUG_ENTER("i_s_innodb_buffer_page_fill");
+  /* deny access to user without PROCESS privilege */
+  if (check_global_access(thd, PROCESS_ACL))
+    DBUG_RETURN(0);
 
-	RETURN_IF_INNODB_NOT_STARTED(tables->schema_table_name.str);
+  int status;
+  buf_page_info_t *b=
+    static_cast<buf_page_info_t*>(my_malloc(PSI_INSTRUMENT_ME,
+                                            MAX_BUF_INFO_CACHED * sizeof *b,
+                                            MYF(MY_WME)));
+  if (!b)
+    DBUG_RETURN(1);
+  for (size_t j= 0;;)
+  {
+    memset((void*) b, 0, MAX_BUF_INFO_CACHED * sizeof *b);
+    mysql_mutex_lock(&buf_pool.mutex);
+    const size_t N= buf_pool.curr_size();
+    const size_t n= std::min<size_t>(N, MAX_BUF_INFO_CACHED);
+    for (size_t i= 0; i < n && j < N; i++, j++)
+      i_s_innodb_buffer_page_get_info(&buf_pool.get_nth_page(j)->page, j,
+                                      &b[i]);
 
-	/* deny access to user without PROCESS privilege */
-	if (check_global_access(thd, PROCESS_ACL)) {
-		DBUG_RETURN(0);
-	}
-
-	heap = mem_heap_create(10000);
-
-	for (ulint n = 0;
-	     n < ut_min(buf_pool.n_chunks, buf_pool.n_chunks_new); n++) {
-		const buf_block_t*	block;
-		ulint			n_blocks;
-		buf_page_info_t*	info_buffer;
-		ulint			num_page;
-		ulint			mem_size;
-		ulint			chunk_size;
-		ulint			num_to_process = 0;
-		ulint			block_id = 0;
-
-		/* Get buffer block of the nth chunk */
-		block = buf_pool.chunks[n].blocks;
-		chunk_size = buf_pool.chunks[n].size;
-		num_page = 0;
-
-		while (chunk_size > 0) {
-			/* we cache maximum MAX_BUF_INFO_CACHED number of
-			buffer page info */
-			num_to_process = ut_min(chunk_size,
-				(ulint)MAX_BUF_INFO_CACHED);
-
-			mem_size = num_to_process * sizeof(buf_page_info_t);
-
-			/* For each chunk, we'll pre-allocate information
-			structures to cache the page information read from
-			the buffer pool. Doing so before obtain any mutex */
-			info_buffer = (buf_page_info_t*) mem_heap_zalloc(
-				heap, mem_size);
-
-			/* Obtain appropriate mutexes. Since this is diagnostic
-			buffer pool info printout, we are not required to
-			preserve the overall consistency, so we can
-			release mutex periodically */
-			mysql_mutex_lock(&buf_pool.mutex);
-
-			/* GO through each block in the chunk */
-			for (n_blocks = num_to_process; n_blocks--; block++) {
-				i_s_innodb_buffer_page_get_info(
-					&block->page, block_id,
-					info_buffer + num_page);
-				block_id++;
-				num_page++;
-			}
-
-			mysql_mutex_unlock(&buf_pool.mutex);
-
-			/* Fill in information schema table with information
-			just collected from the buffer chunk scan */
-			status = i_s_innodb_buffer_page_fill(
-				thd, tables, info_buffer,
-				num_page);
-
-			/* If something goes wrong, break and return */
-			if (status) {
-				break;
-			}
-
-			mem_heap_empty(heap);
-			chunk_size -= num_to_process;
-			num_page = 0;
-		}
-	}
-
-	mem_heap_free(heap);
-
-	DBUG_RETURN(status);
+    mysql_mutex_unlock(&buf_pool.mutex);
+    status= i_s_innodb_buffer_page_fill(thd, tables, b, n);
+    if (status || j >= N)
+      break;
+  }
+  my_free(b);
+  DBUG_RETURN(status);
 }
 
 /*******************************************************************//**
@@ -4304,7 +4254,7 @@ static int i_s_innodb_fill_buffer_lru(THD *thd, TABLE_LIST *tables, Item *)
 		DBUG_RETURN(0);
 	}
 
-	/* Aquire the mutex before allocating info_buffer, since
+	/* Acquire the mutex before allocating info_buffer, since
 	UT_LIST_GET_LEN(buf_pool.LRU) could change */
 	mysql_mutex_lock(&buf_pool.mutex);
 
@@ -4527,6 +4477,15 @@ i_s_dict_fill_sys_tables(
 	DBUG_RETURN(0);
 }
 
+/** Handle the error for information schema query
+@param  err  error value
+@param  thd  thread
+@return 0 if query is interrupted or error */
+static int i_s_sys_error_handling(int err, THD *thd)
+{
+  return thd_kill_level(thd) ? 0 : err;
+}
+
 /** Convert one SYS_TABLES record to dict_table_t.
 @param pcur      persistent cursor position on SYS_TABLES record
 @param mtr       mini-transaction (nullptr=use the dict_sys cache)
@@ -4575,6 +4534,7 @@ i_s_sys_tables_fill_table(
 {
 	btr_pcur_t	pcur;
 	mtr_t		mtr;
+	int		err = 0;
 
 	DBUG_ENTER("i_s_sys_tables_fill_table");
 	RETURN_IF_INNODB_NOT_STARTED(tables->schema_table_name.str);
@@ -4604,8 +4564,15 @@ i_s_sys_tables_fill_table(
 		dict_sys.unlock();
 
 		if (!err_msg) {
-			i_s_dict_fill_sys_tables(thd, table_rec,
-						 tables->table);
+			err = i_s_dict_fill_sys_tables(
+				thd, table_rec, tables->table);
+			if (err) {
+				err = i_s_sys_error_handling(err, thd);
+				if (table_rec) {
+					dict_mem_table_free(table_rec);
+				}
+				goto func_exit;
+			}
 		} else {
 			push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
 					    ER_CANT_FIND_SYSTEM_REC, "%s",
@@ -4623,8 +4590,10 @@ i_s_sys_tables_fill_table(
 
 	mtr.commit();
 	dict_sys.unlock();
+func_exit:
+	ut_free(pcur.old_rec_buf);
 
-	DBUG_RETURN(0);
+	DBUG_RETURN(err);
 }
 
 /*******************************************************************//**
@@ -4738,17 +4707,17 @@ i_s_dict_fill_sys_tablestats(THD* thd, dict_table_t *table,
   Field **fields= table_to_fill->field;
 
   {
-    table->stats_mutex_lock();
+    table->stats_shared_lock();
     auto _ = make_scope_exit([table]() {
-      table->stats_mutex_unlock(); dict_sys.unlock(); });
+      table->stats_shared_unlock(); dict_sys.unlock(); });
 
     OK(fields[SYS_TABLESTATS_ID]->store(longlong(table->id), TRUE));
 
     OK(field_store_string(fields[SYS_TABLESTATS_NAME],
                           table->name.m_name));
-    OK(fields[SYS_TABLESTATS_INIT]->store(table->stat_initialized, true));
+    OK(fields[SYS_TABLESTATS_INIT]->store(table->stat_initialized(), true));
 
-    if (table->stat_initialized)
+    if (table->stat_initialized())
     {
       OK(fields[SYS_TABLESTATS_NROW]->store(table->stat_n_rows, true));
 
@@ -4795,6 +4764,7 @@ i_s_sys_tables_fill_table_stats(
 	btr_pcur_t	pcur;
 	const rec_t*	rec;
 	mtr_t		mtr;
+	int		err = 0;
 
 	DBUG_ENTER("i_s_sys_tables_fill_table_stats");
 	RETURN_IF_INNODB_NOT_STARTED(tables->schema_table_name.str);
@@ -4820,8 +4790,12 @@ i_s_sys_tables_fill_table_stats(
 					     &table_rec);
 
 		if (UNIV_LIKELY(!err_msg)) {
-			i_s_dict_fill_sys_tablestats(thd, table_rec,
+			err = i_s_dict_fill_sys_tablestats(thd, table_rec,
 						     tables->table);
+			if (err) {
+				err = i_s_sys_error_handling(err, thd);
+				goto func_exit;
+			}
 		} else {
 			ut_ad(!table_rec);
 			dict_sys.unlock();
@@ -4839,8 +4813,9 @@ i_s_sys_tables_fill_table_stats(
 
 	mtr.commit();
 	dict_sys.unlock();
-
-	DBUG_RETURN(0);
+func_exit:
+	ut_free(pcur.old_rec_buf);
+	DBUG_RETURN(err);
 }
 
 /*******************************************************************//**
@@ -5012,6 +4987,7 @@ i_s_sys_indexes_fill_table(
 	const rec_t*		rec;
 	mem_heap_t*		heap;
 	mtr_t			mtr;
+	int			err = 0;
 
 	DBUG_ENTER("i_s_sys_indexes_fill_table");
 	RETURN_IF_INNODB_NOT_STARTED(tables->schema_table_name.str);
@@ -5047,11 +5023,13 @@ i_s_sys_indexes_fill_table(
 		dict_sys.unlock();
 
 		if (!err_msg) {
-			if (int err = i_s_dict_fill_sys_indexes(
-				    thd, table_id, space_id, &index_rec,
-				    tables->table)) {
-				mem_heap_free(heap);
-				DBUG_RETURN(err);
+			err = i_s_dict_fill_sys_indexes(
+				    thd, table_id, space_id,
+				    &index_rec,
+				    tables->table);
+			if (err) {
+				err = i_s_sys_error_handling(err, thd);
+				goto func_exit;
 			}
 		} else {
 			push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
@@ -5069,9 +5047,11 @@ i_s_sys_indexes_fill_table(
 
 	mtr.commit();
 	dict_sys.unlock();
+func_exit:
 	mem_heap_free(heap);
+	ut_free(pcur.old_rec_buf);
 
-	DBUG_RETURN(0);
+	DBUG_RETURN(err);
 }
 /*******************************************************************//**
 Bind the dynamic table INFORMATION_SCHEMA.innodb_sys_indexes
@@ -5220,6 +5200,7 @@ i_s_sys_columns_fill_table(
 	const char*	col_name;
 	mem_heap_t*	heap;
 	mtr_t		mtr;
+	int		err = 0;
 
 	DBUG_ENTER("i_s_sys_columns_fill_table");
 	RETURN_IF_INNODB_NOT_STARTED(tables->schema_table_name.str);
@@ -5251,9 +5232,14 @@ i_s_sys_columns_fill_table(
 		dict_sys.unlock();
 
 		if (!err_msg) {
-			i_s_dict_fill_sys_columns(thd, table_id, col_name,
-						 &column_rec, nth_v_col,
-						 tables->table);
+			err = i_s_dict_fill_sys_columns(
+				thd, table_id, col_name,
+				&column_rec, nth_v_col,
+				tables->table);
+			if (err) {
+				err = i_s_sys_error_handling(err, thd);
+				goto func_exit;
+			}
 		} else {
 			push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
 					    ER_CANT_FIND_SYSTEM_REC, "%s",
@@ -5270,9 +5256,11 @@ i_s_sys_columns_fill_table(
 
 	mtr.commit();
 	dict_sys.unlock();
+func_exit:
 	mem_heap_free(heap);
+	ut_free(pcur.old_rec_buf);
 
-	DBUG_RETURN(0);
+	DBUG_RETURN(err);
 }
 
 /*******************************************************************//**
@@ -5404,6 +5392,7 @@ i_s_sys_virtual_fill_table(
 	ulint		pos;
 	ulint		base_pos;
 	mtr_t		mtr;
+	int		err = 0;
 
 	DBUG_ENTER("i_s_sys_virtual_fill_table");
 	RETURN_IF_INNODB_NOT_STARTED(tables->schema_table_name.str);
@@ -5432,8 +5421,13 @@ i_s_sys_virtual_fill_table(
 		dict_sys.unlock();
 
 		if (!err_msg) {
-			i_s_dict_fill_sys_virtual(thd, table_id, pos, base_pos,
-						  tables->table);
+			err = i_s_dict_fill_sys_virtual(
+				thd, table_id, pos, base_pos,
+				tables->table);
+			if (err) {
+				err = i_s_sys_error_handling(err, thd);
+				goto func_exit;
+			}
 		} else {
 			push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
 					    ER_CANT_FIND_SYSTEM_REC, "%s",
@@ -5450,6 +5444,9 @@ i_s_sys_virtual_fill_table(
 	dict_sys.unlock();
 
 	DBUG_RETURN(0);
+func_exit:
+	ut_free(pcur.old_rec_buf);
+	DBUG_RETURN(err);
 }
 
 /** Bind the dynamic table INFORMATION_SCHEMA.innodb_sys_virtual
@@ -5577,6 +5574,7 @@ i_s_sys_fields_fill_table(
 	mem_heap_t*	heap;
 	index_id_t	last_id;
 	mtr_t		mtr;
+	int		err = 0;
 
 	DBUG_ENTER("i_s_sys_fields_fill_table");
 	RETURN_IF_INNODB_NOT_STARTED(tables->schema_table_name.str);
@@ -5612,8 +5610,13 @@ i_s_sys_fields_fill_table(
 		dict_sys.unlock();
 
 		if (!err_msg) {
-			i_s_dict_fill_sys_fields(thd, index_id, &field_rec,
-						 pos, tables->table);
+			err = i_s_dict_fill_sys_fields(
+				thd, index_id, &field_rec,
+				pos, tables->table);
+			if (err) {
+				err = i_s_sys_error_handling(err, thd);
+				goto func_exit;
+			}
 			last_id = index_id;
 		} else {
 			push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
@@ -5631,9 +5634,11 @@ i_s_sys_fields_fill_table(
 
 	mtr.commit();
 	dict_sys.unlock();
+func_exit:
 	mem_heap_free(heap);
+	ut_free(pcur.old_rec_buf);
 
-	DBUG_RETURN(0);
+	DBUG_RETURN(err);
 }
 /*******************************************************************//**
 Bind the dynamic table INFORMATION_SCHEMA.innodb_sys_fields
@@ -5770,6 +5775,7 @@ i_s_sys_foreign_fill_table(
 	const rec_t*	rec;
 	mem_heap_t*	heap;
 	mtr_t		mtr;
+	int		err = 0;
 
 	DBUG_ENTER("i_s_sys_foreign_fill_table");
 	RETURN_IF_INNODB_NOT_STARTED(tables->schema_table_name.str);
@@ -5797,8 +5803,12 @@ i_s_sys_foreign_fill_table(
 		dict_sys.unlock();
 
 		if (!err_msg) {
-			i_s_dict_fill_sys_foreign(thd, &foreign_rec,
-						 tables->table);
+			err = i_s_dict_fill_sys_foreign(
+				thd, &foreign_rec, tables->table);
+			if (err) {
+				err = i_s_sys_error_handling(err, thd);
+				goto func_exit;
+			}
 		} else {
 			push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
 					    ER_CANT_FIND_SYSTEM_REC, "%s",
@@ -5815,9 +5825,11 @@ i_s_sys_foreign_fill_table(
 
 	mtr.commit();
 	dict_sys.unlock();
+func_exit:
 	mem_heap_free(heap);
+	ut_free(pcur.old_rec_buf);
 
-	DBUG_RETURN(0);
+	DBUG_RETURN(err);
 }
 
 /*******************************************************************//**
@@ -5951,6 +5963,7 @@ i_s_sys_foreign_cols_fill_table(
 	const rec_t*	rec;
 	mem_heap_t*	heap;
 	mtr_t		mtr;
+	int		err = 0;
 
 	DBUG_ENTER("i_s_sys_foreign_cols_fill_table");
 	RETURN_IF_INNODB_NOT_STARTED(tables->schema_table_name.str);
@@ -5982,9 +5995,13 @@ i_s_sys_foreign_cols_fill_table(
 		dict_sys.unlock();
 
 		if (!err_msg) {
-			i_s_dict_fill_sys_foreign_cols(
-				thd, name, for_col_name, ref_col_name, pos,
-				tables->table);
+			err = i_s_dict_fill_sys_foreign_cols(
+				thd, name, for_col_name,
+				ref_col_name, pos, tables->table);
+			if (err) {
+				err = i_s_sys_error_handling(err, thd);
+				goto func_exit;
+			}
 		} else {
 			push_warning_printf(thd, Sql_condition::WARN_LEVEL_WARN,
 					    ER_CANT_FIND_SYSTEM_REC, "%s",
@@ -6001,9 +6018,11 @@ i_s_sys_foreign_cols_fill_table(
 
 	mtr.commit();
 	dict_sys.unlock();
+func_exit:
 	mem_heap_free(heap);
+	ut_free(pcur.old_rec_buf);
 
-	DBUG_RETURN(0);
+	DBUG_RETURN(err);
 }
 /*******************************************************************//**
 Bind the dynamic table INFORMATION_SCHEMA.innodb_sys_foreign_cols
@@ -6187,7 +6206,8 @@ static int i_s_sys_tablespaces_fill_table(THD *thd, TABLE_LIST *tables, Item*)
 
   for (fil_space_t &space : fil_system.space_list)
   {
-    if (space.purpose == FIL_TYPE_TABLESPACE && !space.is_stopping() &&
+    if (!space.is_temporary() && !space.is_being_imported() &&
+        !space.is_stopping() &&
         space.chain.start)
     {
       space.reacquire();
@@ -6206,6 +6226,8 @@ static int i_s_sys_tablespaces_fill_table(THD *thd, TABLE_LIST *tables, Item*)
   mysql_mutex_unlock(&fil_system.mutex);
   if (err == DB_SUCCESS)
     err= i_s_sys_tablespaces_fill(thd, *fil_system.temp_space, tables->table);
+  else
+    err = i_s_sys_error_handling(err, thd);
   DBUG_RETURN(err);
 }
 
@@ -6414,7 +6436,7 @@ i_s_tablespaces_encryption_fill_table(
 	fil_system.freeze_space_list++;
 
 	for (fil_space_t& space : fil_system.space_list) {
-		if (space.purpose == FIL_TYPE_TABLESPACE
+		if (!space.is_temporary() && !space.is_being_imported()
 		    && !space.is_stopping()) {
 			space.reacquire();
 			mysql_mutex_unlock(&fil_system.mutex);

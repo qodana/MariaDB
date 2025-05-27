@@ -29,11 +29,14 @@
 #include <mysql_com.h>                  /* USERNAME_LENGTH */
 #include "sql_bitmap.h"
 #include "lex_charset.h"
+#include "lex_ident.h"
+#include "sql_basic_types.h"           /* query_id_t */
 
 struct TABLE;
 class Type_handler;
 class Field;
 class Index_statistics;
+struct Lex_ident_cli_st;
 
 class THD;
 
@@ -132,7 +135,7 @@ typedef struct st_key {
   key_map overlapped;
   /* Set of keys constraint correlated with this key */
   key_map constraint_correlated;
-  LEX_CSTRING name;
+  Lex_ident_column name;
   enum  ha_key_alg algorithm;
   /*
     Note that parser is used when the table is opened for use, and
@@ -170,7 +173,7 @@ typedef struct st_key {
   engine_option_value *option_list;
   ha_index_option_struct *option_struct;                  /* structure with parsed options */
 
-  double actual_rec_per_key(uint i);
+  double actual_rec_per_key(uint i) const;
 } KEY;
 
 
@@ -233,7 +236,7 @@ struct AUTHID
   LEX_CSTRING user, host;
   void init() { memset(this, 0, sizeof(*this)); }
   void copy(MEM_ROOT *root, const LEX_CSTRING *usr, const LEX_CSTRING *host);
-  bool is_role() const { return user.str[0] && !host.str[0]; }
+  bool is_role() const { return user.str[0] && (!host.str || !host.str[0]); }
   void set_lex_string(LEX_CSTRING *l, char *buf)
   {
     if (is_role())
@@ -321,11 +324,43 @@ typedef struct  user_conn {
   uint conn_per_hour, updates, questions;
   /* Maximum amount of resources which account is allowed to consume. */
   USER_RESOURCES user_resources;
+
+  /*
+    The CHARSET_INFO used for hashes to compare the entire 'user\0hash' key.
+    Eventually we should fix it as follows:
+    - the user part should be hashed and compared case sensitively,
+    - the host part should be hashed and compared case insensitively.
+  */
+  static CHARSET_INFO *user_host_key_charset_info_for_hash()
+  {
+    return &my_charset_utf8mb3_general1400_as_ci;
+  }
 } USER_CONN;
+
+
+/* Statistics used by user_stats */
+
+struct rows_stats
+{
+  ha_rows key_read_hit;
+  ha_rows key_read_miss;
+  ha_rows read;
+  ha_rows tmp_read;
+  ha_rows updated;
+  ha_rows inserted;
+  ha_rows deleted;
+  ha_rows pages_accessed;
+  ha_rows pages_read_count;                     // Read from disk
+};
+
 
 typedef struct st_user_stats
 {
   char user[MY_MAX(USERNAME_LENGTH, LIST_PROCESS_HOST_LEN) + 1];
+  static CHARSET_INFO *user_key_charset_info_for_hash()
+  {
+    return &my_charset_utf8mb3_general1400_as_ci;
+  }
   // Account name the user is mapped to when this is a user from mapped_user.
   // Otherwise, the same value as user.
   char priv_user[MY_MAX(USERNAME_LENGTH, LIST_PROCESS_HOST_LEN) + 1];
@@ -334,8 +369,8 @@ typedef struct st_user_stats
   uint total_ssl_connections;
   uint concurrent_connections;
   time_t connected_time;  // in seconds
-  ha_rows rows_read, rows_sent;
-  ha_rows rows_updated, rows_deleted, rows_inserted;
+  struct rows_stats rows_stats;
+  ha_rows rows_sent;
   ulonglong bytes_received;
   ulonglong bytes_sent;
   ulonglong binlog_bytes_written;
@@ -348,15 +383,17 @@ typedef struct st_user_stats
   double cpu_time;        // in seconds
 } USER_STATS;
 
+
 typedef struct st_table_stats
 {
   char table[NAME_LEN * 2 + 2];  // [db] + '\0' + [table] + '\0'
   size_t table_name_length;
-  ulonglong rows_read, rows_changed;
+  struct rows_stats rows_stats;
   ulonglong rows_changed_x_indexes;
   /* Stores enum db_type, but forward declarations cannot be done */
   int engine_type;
 } TABLE_STATS;
+
 
 typedef struct st_index_stats
 {
@@ -364,6 +401,8 @@ typedef struct st_index_stats
   char index[NAME_LEN * 3 + 3];
   size_t index_name_length;                       /* Length of 'index' */
   ulonglong rows_read;
+  ulonglong queries;
+  query_id_t query_id;
 } INDEX_STATS;
 
 
@@ -873,12 +912,9 @@ public:
   {
     m_index= 0;
     m_target_bound= 0;
+    m_cursor_offset= 0;
     m_direction= 0;
     m_implicit_cursor= false;
-  }
-  void init(const Lex_for_loop_st &other)
-  {
-    *this= other;
   }
   bool is_for_loop_cursor() const { return m_target_bound == NULL; }
   bool is_for_loop_explicit_cursor() const
@@ -908,12 +944,6 @@ public:
   }
   Item *make_item_func_trim_std(THD *thd) const;
   Item *make_item_func_trim_oracle(THD *thd) const;
-  /*
-    This method is still used to handle LTRIM and RTRIM,
-    while the special syntax TRIM(... BOTH|LEADING|TRAILING)
-    is now handled by Schema::make_item_func_trim().
-  */
-  Item *make_item_func_trim(THD *thd) const;
 };
 
 
@@ -1021,25 +1051,113 @@ public:
 };
 
 
-class Timeval: public timeval
+class Timeval: public my_timeval
 {
 protected:
   Timeval() = default;
 public:
   Timeval(my_time_t sec, ulong usec)
   {
-    tv_sec= sec;
+    tv_sec= (longlong) sec;
     /*
       Since tv_usec is not always of type ulong, cast usec parameter
       explicitly to uint to avoid compiler warnings about losing
       integer precision.
     */
     DBUG_ASSERT(usec < 1000000);
-    tv_usec= (uint)usec;
+    tv_usec= usec;
   }
-  explicit Timeval(const timeval &tv)
-   :timeval(tv)
+  explicit Timeval(const my_timeval &tv)
+    :my_timeval(tv)
+  {}
+};
+
+static inline void my_timeval_trunc(struct my_timeval *tv, uint decimals)
+{
+  tv->tv_usec-= (suseconds_t) my_time_fraction_remainder(tv->tv_usec, decimals);
+}
+
+
+/*
+  A value that's either a Timeval or SQL NULL
+*/
+
+class Timeval_null: protected Timeval
+{
+  bool m_is_null;
+public:
+  Timeval_null()
+   :Timeval(0, 0),
+    m_is_null(true)
   { }
+  Timeval_null(const my_time_t sec, ulong usec)
+   :Timeval(sec, usec),
+    m_is_null(false)
+  { }
+  const Timeval & to_timeval() const
+  {
+    DBUG_ASSERT(!m_is_null);
+    return *this;
+  }
+  bool is_null() const { return m_is_null; }
+};
+
+
+/*
+  A run-time address of an SP variable. Consists of:
+  - The rcontext type (LOCAL, PACKAGE BODY),
+    controlled by m_rcontext_handler
+  - The frame offset
+*/
+class sp_rcontext_addr
+{
+public:
+  sp_rcontext_addr(const class Sp_rcontext_handler *h, uint offset)
+   :m_rcontext_handler(h), m_offset(offset)
+  { }
+  const Sp_rcontext_handler *rcontext_handler() const
+  {
+    return m_rcontext_handler;
+  }
+  uint offset() const
+  {
+    return m_offset;
+  }
+protected:
+  const class Sp_rcontext_handler *m_rcontext_handler;
+  uint m_offset;               ///< Frame offset
+};
+
+
+/*
+  This class stores run time references
+    (variables that store offsets of another variable or a cursor).
+
+  - The "sp_rcontext_addr" contains the address of the reference variable.
+    Its value is evaluated (using val_ref() of the variable's Field)
+    to get the rcontext offset of the referenced variable.
+
+  - The m_deref_rcontext_handler member contains the rcontext handler of
+    the referenced variable (or cursor).
+    m_deref_rcontext_handler can be set to nullptr to mean that
+    the sp_rcontext_ref instance is not a reference. In this case its
+    sp_rcontext_addr contains the direct address of the target variable/cursor
+    and does not need dereferencing.
+*/
+class sp_rcontext_ref: public sp_rcontext_addr
+{
+public:
+  sp_rcontext_ref(const sp_rcontext_addr &addr,
+                  const Sp_rcontext_handler *deref_rcontext_handler)
+   :sp_rcontext_addr(addr),
+    m_deref_rcontext_handler(deref_rcontext_handler)
+  { }
+  const Sp_rcontext_handler *deref_rcontext_handler() const
+  {
+    return m_deref_rcontext_handler;
+  }
+protected:
+  const Sp_rcontext_handler *m_deref_rcontext_handler;
 };
 
 

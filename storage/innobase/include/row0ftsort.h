@@ -35,7 +35,7 @@ Created 10/13/2010 Jimmy Yang
 #include "btr0bulk.h"
 #include "srv0srv.h"
 
-/** This structure defineds information the scan thread will fetch
+/** This structure defines information the scan thread will fetch
 and put to the linked list for parallel tokenization/sort threads
 to process */
 typedef struct fts_doc_item     fts_doc_item_t;
@@ -104,7 +104,10 @@ typedef UT_LIST_BASE_NODE_T(row_fts_token_t)     fts_token_list_t;
 
 /** Structure stores information from string tokenization operation */
 struct fts_tokenize_ctx {
-	ulint			processed_len;  /*!< processed string length */
+	/** the processed string length in bytes
+	(when using the built-in tokenizer),
+	or the number of row_merge_fts_doc_tokenize_by_parser() calls */
+	ulint			processed_len;
 	ulint			init_pos;       /*!< doc start position */
 	ulint			buf_used;       /*!< the sort buffer (ID) when
 						tokenization stops, which
@@ -115,6 +118,7 @@ struct fts_tokenize_ctx {
 	ib_rbt_t*		cached_stopword;/*!< in: stopword list */
 	dfield_t		sort_field[FTS_NUM_FIELDS_SORT];
 						/*!< in: sort field */
+	/** parsed tokens (when using an external parser) */
 	fts_token_list_t	fts_token_list;
 
 	fts_tokenize_ctx() :

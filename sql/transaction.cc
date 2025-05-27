@@ -14,11 +14,6 @@
    along with this program; if not, write to the Free Software
    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1335  USA */
 
-
-#ifdef USE_PRAGMA_IMPLEMENTATION
-#pragma implementation                         // gcc: Class implementation
-#endif
-
 #include "mariadb.h"
 #include "sql_priv.h"
 #include "transaction.h"
@@ -120,11 +115,15 @@ bool trans_begin(THD *thd, uint flags)
   if (thd->in_multi_stmt_transaction_mode() ||
       (thd->variables.option_bits & OPTION_TABLE_LOCK))
   {
+    bool was_in_trans= thd->server_status &
+      (SERVER_STATUS_IN_TRANS | SERVER_STATUS_IN_TRANS_READONLY);
     thd->variables.option_bits&= ~OPTION_TABLE_LOCK;
     thd->server_status&=
       ~(SERVER_STATUS_IN_TRANS | SERVER_STATUS_IN_TRANS_READONLY);
     DBUG_PRINT("info", ("clearing SERVER_STATUS_IN_TRANS"));
     res= MY_TEST(ha_commit_trans(thd, TRUE));
+    if (was_in_trans)
+      trans_reset_one_shot_chistics(thd);
 #ifdef WITH_WSREP
     if (wsrep_thd_is_local(thd))
     {
@@ -172,12 +171,14 @@ bool trans_begin(THD *thd, uint flags)
       Implicitly starting a RW transaction is allowed for backward
       compatibility.
     */
-    const bool user_is_super=
-      MY_TEST(thd->security_ctx->master_access & PRIV_IGNORE_READ_ONLY);
-    if (opt_readonly && !user_is_super)
+    if (opt_readonly)
     {
-      my_error(ER_OPTION_PREVENTS_STATEMENT, MYF(0), "--read-only");
-      DBUG_RETURN(true);
+      if (!(thd->security_ctx->master_access & PRIV_IGNORE_READ_ONLY) ||
+          opt_readonly == READONLY_NO_LOCK_NO_ADMIN)
+      {
+        mariadb_error_read_only();
+        DBUG_RETURN(true);
+      }
     }
     thd->tx_read_only= false;
     /*
@@ -191,7 +192,7 @@ bool trans_begin(THD *thd, uint flags)
   }
 
 #ifdef WITH_WSREP
-  if (wsrep_thd_is_local(thd))
+  if (WSREP(thd) && wsrep_thd_is_local(thd))
   {
     if (wsrep_sync_wait(thd))
       DBUG_RETURN(TRUE);
@@ -255,10 +256,14 @@ bool trans_begin(THD *thd, uint flags)
 bool trans_commit(THD *thd)
 {
   int res;
+  PSI_stage_info org_stage;
   DBUG_ENTER("trans_commit");
 
   if (trans_check(thd))
     DBUG_RETURN(TRUE);
+
+  thd->backup_stage(&org_stage);
+  THD_STAGE_INFO(thd, stage_commit);
 
   thd->server_status&=
     ~(SERVER_STATUS_IN_TRANS | SERVER_STATUS_IN_TRANS_READONLY);
@@ -288,6 +293,7 @@ bool trans_commit(THD *thd)
   DBUG_ASSERT(thd->m_transaction_psi == NULL);
   trans_track_end_trx(thd);
 
+  THD_STAGE_INFO(thd, org_stage);
   DBUG_RETURN(MY_TEST(res));
 }
 
@@ -320,6 +326,10 @@ bool trans_commit_implicit(THD *thd)
   if (thd->in_multi_stmt_transaction_mode() ||
       (thd->variables.option_bits & OPTION_TABLE_LOCK))
   {
+    PSI_stage_info org_stage;
+    thd->backup_stage(&org_stage);
+    THD_STAGE_INFO(thd, stage_commit_implicit);
+
     /* Safety if one did "drop table" on locked tables */
     if (!thd->locked_tables_mode)
       thd->variables.option_bits&= ~OPTION_TABLE_LOCK;
@@ -327,6 +337,8 @@ bool trans_commit_implicit(THD *thd)
       ~(SERVER_STATUS_IN_TRANS | SERVER_STATUS_IN_TRANS_READONLY);
     DBUG_PRINT("info", ("clearing SERVER_STATUS_IN_TRANS"));
     res= MY_TEST(ha_commit_trans(thd, TRUE));
+
+    THD_STAGE_INFO(thd, org_stage);
   }
 
   thd->variables.option_bits&= ~(OPTION_BEGIN | OPTION_BINLOG_THIS_TRX);
@@ -361,10 +373,14 @@ bool trans_commit_implicit(THD *thd)
 bool trans_rollback(THD *thd)
 {
   int res;
+  PSI_stage_info org_stage;
   DBUG_ENTER("trans_rollback");
 
   if (trans_check(thd))
     DBUG_RETURN(TRUE);
+
+  thd->backup_stage(&org_stage);
+  THD_STAGE_INFO(thd, stage_rollback);
 
   thd->server_status&=
     ~(SERVER_STATUS_IN_TRANS | SERVER_STATUS_IN_TRANS_READONLY);
@@ -384,6 +400,7 @@ bool trans_rollback(THD *thd)
 
   trans_track_end_trx(thd);
 
+  THD_STAGE_INFO(thd, org_stage);
   DBUG_RETURN(MY_TEST(res));
 }
 
@@ -406,7 +423,11 @@ bool trans_rollback(THD *thd)
 bool trans_rollback_implicit(THD *thd)
 {
   int res;
+  PSI_stage_info org_stage;
   DBUG_ENTER("trans_rollback_implict");
+
+  thd->backup_stage(&org_stage);
+  THD_STAGE_INFO(thd, stage_rollback_implicit);
 
   /*
     Always commit/rollback statement transaction before manipulating
@@ -416,12 +437,12 @@ bool trans_rollback_implicit(THD *thd)
   */
   DBUG_ASSERT(thd->transaction->stmt.is_empty() && !thd->in_sub_stmt);
 
-  thd->server_status&= ~SERVER_STATUS_IN_TRANS;
+  thd->server_status&= ~(SERVER_STATUS_IN_TRANS | SERVER_STATUS_IN_TRANS_READONLY);
   DBUG_PRINT("info", ("clearing SERVER_STATUS_IN_TRANS"));
   res= ha_rollback_trans(thd, true);
   /*
     We don't reset OPTION_BEGIN flag below to simulate implicit start
-    of new transacton in @@autocommit=1 mode. This is necessary to
+    of new transaction in @@autocommit=1 mode. This is necessary to
     preserve backward compatibility.
   */
   thd->variables.option_bits&= ~(OPTION_BINLOG_THIS_TRX);
@@ -434,6 +455,7 @@ bool trans_rollback_implicit(THD *thd)
 
   trans_track_end_trx(thd);
 
+  THD_STAGE_INFO(thd, org_stage);
   DBUG_RETURN(MY_TEST(res));
 }
 
@@ -469,11 +491,17 @@ bool trans_commit_stmt(THD *thd)
 
   if (thd->transaction->stmt.ha_list)
   {
+    PSI_stage_info org_stage;
+    thd->backup_stage(&org_stage);
+    THD_STAGE_INFO(thd, stage_commit);
+
     res= ha_commit_trans(thd, FALSE);
     if (! thd->in_active_multi_stmt_transaction())
     {
       trans_reset_one_shot_chistics(thd);
     }
+
+    THD_STAGE_INFO(thd, org_stage);
   }
 
   mysql_mutex_assert_not_owner(&LOCK_prepare_ordered);
@@ -532,9 +560,15 @@ bool trans_rollback_stmt(THD *thd)
 
   if (thd->transaction->stmt.ha_list)
   {
+    PSI_stage_info org_stage;
+    thd->backup_stage(&org_stage);
+    THD_STAGE_INFO(thd, stage_rollback);
+
     ha_rollback_trans(thd, FALSE);
     if (! thd->in_active_multi_stmt_transaction())
       trans_reset_one_shot_chistics(thd);
+
+    THD_STAGE_INFO(thd, org_stage);
   }
 
 #ifdef HAVE_REPLICATION
@@ -551,16 +585,15 @@ bool trans_rollback_stmt(THD *thd)
 }
 
 /** Find a savepoint by name in a savepoint list */
-SAVEPOINT** find_savepoint_in_list(THD *thd, LEX_CSTRING name,
+SAVEPOINT** find_savepoint_in_list(THD *thd,
+                                   const Lex_ident_savepoint name,
                                    SAVEPOINT ** const list)
 {
   SAVEPOINT **sv= list;
 
   while (*sv)
   {
-    if (system_charset_info->strnncoll(
-            (uchar *) name.str, name.length,
-            (uchar *) (*sv)->name, (*sv)->length) == 0)
+    if (name.streq(Lex_cstring((*sv)->name, (*sv)->length)))
       break;
     sv= &(*sv)->prev;
   }
@@ -570,12 +603,12 @@ SAVEPOINT** find_savepoint_in_list(THD *thd, LEX_CSTRING name,
 
 /* Find a named savepoint in the current transaction. */
 static SAVEPOINT **
-find_savepoint(THD *thd, LEX_CSTRING name)
+find_savepoint(THD *thd, Lex_ident_savepoint name)
 {
   return find_savepoint_in_list(thd, name, &thd->transaction->savepoints);
 }
 
-SAVEPOINT* savepoint_add(THD *thd, LEX_CSTRING name, SAVEPOINT **list,
+SAVEPOINT* savepoint_add(THD *thd, Lex_ident_savepoint name, SAVEPOINT **list,
                          int (*release_old)(THD*, SAVEPOINT*))
 {
   DBUG_ENTER("savepoint_add");
@@ -627,7 +660,8 @@ bool trans_savepoint(THD *thd, LEX_CSTRING name)
   if (thd->transaction->xid_state.check_has_uncommitted_xa())
     DBUG_RETURN(TRUE);
 
-  SAVEPOINT *newsv= savepoint_add(thd, name, &thd->transaction->savepoints,
+  SAVEPOINT *newsv= savepoint_add(thd, Lex_ident_savepoint(name),
+                                  &thd->transaction->savepoints,
                                   ha_release_savepoint);
 
   if (newsv == NULL)
@@ -640,10 +674,6 @@ bool trans_savepoint(THD *thd, LEX_CSTRING name)
   */
   if (unlikely(ha_savepoint(thd, newsv)))
     DBUG_RETURN(TRUE);
-
-  int error= online_alter_savepoint_set(thd, name);
-  if (unlikely(error))
-    DBUG_RETURN(error);
 
   newsv->prev= thd->transaction->savepoints;
   thd->transaction->savepoints= newsv;
@@ -683,7 +713,7 @@ bool trans_savepoint(THD *thd, LEX_CSTRING name)
 bool trans_rollback_to_savepoint(THD *thd, LEX_CSTRING name)
 {
   int res= FALSE;
-  SAVEPOINT *sv= *find_savepoint(thd, name);
+  SAVEPOINT *sv= *find_savepoint(thd, Lex_ident_savepoint(name));
   DBUG_ENTER("trans_rollback_to_savepoint");
 
   if (sv == NULL)
@@ -703,8 +733,6 @@ bool trans_rollback_to_savepoint(THD *thd, LEX_CSTRING name)
     push_warning(thd, Sql_condition::WARN_LEVEL_WARN,
                  ER_WARNING_NOT_COMPLETE_ROLLBACK,
                  ER_THD(thd, ER_WARNING_NOT_COMPLETE_ROLLBACK));
-
-  res= res || online_alter_savepoint_rollback(thd, name);
 
   thd->transaction->savepoints= sv;
 
@@ -740,7 +768,7 @@ bool trans_rollback_to_savepoint(THD *thd, LEX_CSTRING name)
 bool trans_release_savepoint(THD *thd, LEX_CSTRING name)
 {
   int res= FALSE;
-  SAVEPOINT *sv= *find_savepoint(thd, name);
+  SAVEPOINT *sv= *find_savepoint(thd, Lex_ident_savepoint(name));
   DBUG_ENTER("trans_release_savepoint");
 
   if (sv == NULL)

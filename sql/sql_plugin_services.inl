@@ -18,6 +18,7 @@
 #include <service_versions.h>
 #include <mysql/service_wsrep.h>
 #include <mysql/service_thd_mdl.h>
+#include <mysql/service_print_check_msg.h>
 
 struct st_service_ref {
   const char *name;
@@ -183,7 +184,8 @@ static struct wsrep_service_st wsrep_handler = {
   wsrep_report_bf_lock_wait,
   wsrep_thd_kill_LOCK,
   wsrep_thd_kill_UNLOCK,
-  wsrep_thd_set_PA_unsafe
+  wsrep_thd_set_PA_unsafe,
+  wsrep_get_domain_id
 };
 
 static struct thd_specifics_service_st thd_specifics_handler=
@@ -208,7 +210,8 @@ static struct my_crypt_service_st crypt_handler=
   my_aes_crypt,
   my_aes_get_size,
   my_aes_ctx_size,
-  my_random_bytes
+  my_random_bytes,
+  my_bytes_to_key,
 };
 
 static struct my_print_error_service_st my_print_error_handler=
@@ -216,6 +219,11 @@ static struct my_print_error_service_st my_print_error_handler=
   my_error,
   my_printf_error,
   my_printv_error
+};
+
+static struct print_check_msg_service_st print_check_msg_handler=
+{
+  print_check_msg
 };
 
 static struct json_service_st json_handler=
@@ -226,11 +234,6 @@ static struct json_service_st json_handler=
   json_get_object_nkey,
   json_escape_string,
   json_unescape_json
-};
-
-static struct thd_mdl_service_st thd_mdl_handler=
-{
-  thd_mdl_context
 };
 
 struct sql_service_st sql_service_handler=
@@ -256,6 +259,11 @@ struct sql_service_st sql_service_handler=
   mysql_fetch_fields,
   mysql_real_escape_string,
   mysql_ssl_set
+};
+
+static struct thd_mdl_service_st thd_mdl_handler=
+{
+  thd_mdl_context
 };
 
 #define DEFINE_warning_function(name, ret) {                                \
@@ -338,6 +346,7 @@ static struct st_service_ref list_of_services[]=
   { "my_crypt_service",            VERSION_my_crypt,            &crypt_handler},
   { "my_md5_service",              VERSION_my_md5,              &my_md5_handler},
   { "my_print_error_service",      VERSION_my_print_error,      &my_print_error_handler},
+  { "print_check_msg_service",     VERSION_print_check_msg,     &print_check_msg_handler},
   { "my_sha1_service",             VERSION_my_sha1,             &my_sha1_handler},
   { "my_sha2_service",             VERSION_my_sha2,             &my_sha2_handler},
   { "my_snprintf_service",         VERSION_my_snprintf,         &my_snprintf_handler },
@@ -352,8 +361,8 @@ static struct st_service_ref list_of_services[]=
   { "thd_wait_service",            VERSION_thd_wait,            &thd_wait_handler },
   { "wsrep_service",               VERSION_wsrep,               &wsrep_handler },
   { "json_service",                VERSION_json,                &json_handler },
-  { "thd_mdl_service",             VERSION_thd_mdl,             &thd_mdl_handler },
   { "sql_service",                 VERSION_sql_service,         &sql_service_handler },
+  { "thd_mdl_service",             VERSION_thd_mdl,             &thd_mdl_handler },
   { "provider_service_bzip2",      VERSION_provider_bzip2,      &provider_handler_bzip2 },
   { "provider_service_lz4",        VERSION_provider_lz4,        &provider_handler_lz4 },
   { "provider_service_lzma",       VERSION_provider_lzma,       &provider_handler_lzma },

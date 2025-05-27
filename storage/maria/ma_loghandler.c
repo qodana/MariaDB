@@ -395,7 +395,7 @@ struct st_translog_descriptor
   DYNAMIC_ARRAY unfinished_files;
 
   /*
-    minimum number of still need file calculeted during last
+    minimum number of still needed file calculated during last
     translog_purge call
   */
   uint32 min_need_file;
@@ -1099,10 +1099,6 @@ static TRANSLOG_FILE *get_current_logfile()
 uchar	maria_trans_file_magic[]=
 { (uchar) 254, (uchar) 254, (uchar) 11, '\001', 'M', 'A', 'R', 'I', 'A',
  'L', 'O', 'G' };
-#define LOG_HEADER_DATA_SIZE (sizeof(maria_trans_file_magic) + \
-                              8 + 4 + 4 + 4 + 2 + 3 + \
-                              LSN_STORE_SIZE)
-
 
 /*
   Write log file page header in the just opened new log file
@@ -1586,7 +1582,7 @@ static my_bool translog_buffer_init(struct st_translog_buffer *buffer, int num)
 /*
   @brief close transaction log file by descriptor
 
-  @param file            pagegecache file descriptor reference
+  @param file            pagecache file descriptor reference
 
   @return Operation status
     @retval 0  OK
@@ -1943,7 +1939,7 @@ static void translog_finish_page(TRANSLOG_ADDRESS *horizon,
   DBUG_ASSERT(LSN_FILE_NO(*horizon) == LSN_FILE_NO(cursor->buffer->offset)
               || translog_status == TRANSLOG_UNINITED);
   if ((LSN_FILE_NO(*horizon) != LSN_FILE_NO(cursor->buffer->offset)))
-    DBUG_VOID_RETURN; // everything wrong do not write to awoid more problems
+    DBUG_VOID_RETURN; // everything wrong do not write to avoid more problems
   translog_check_cursor(cursor);
   if (cursor->protected)
   {
@@ -3458,7 +3454,7 @@ static my_bool translog_truncate_log(TRANSLOG_ADDRESS addr)
   page_rest= next_page_offset - LSN_OFFSET(addr);
   memset(page_buff, TRANSLOG_FILLER, page_rest);
   rc= ((fd= open_logfile_by_number_no_cache(LSN_FILE_NO(addr))) < 0 ||
-       ((mysql_file_chsize(fd, next_page_offset, TRANSLOG_FILLER, MYF(MY_WME)) ||
+       ((mysql_file_chsize(fd, next_page_offset, TRANSLOG_FILLER, MYF(MY_WME)) > 0 ||
          (page_rest && my_pwrite(fd, page_buff, page_rest, LSN_OFFSET(addr),
                                  log_write_flags)) ||
          mysql_file_sync(fd, MYF(MY_WME)))));
@@ -3612,6 +3608,9 @@ static my_bool translog_is_LSN_chunk(uchar type)
   @retval 0 OK
   @retval 1 Error
 */
+
+/* Stack size 26120 from clang */
+PRAGMA_DISABLE_CHECK_STACK_FRAME
 
 my_bool translog_init_with_table(const char *directory,
                                  uint32 log_file_max_size,
@@ -4265,6 +4264,7 @@ err:
   ma_message_no_user(0, "log initialization failed");
   DBUG_RETURN(1);
 }
+PRAGMA_REENABLE_CHECK_STACK_FRAME
 
 
 /*
@@ -5734,7 +5734,7 @@ translog_write_variable_record_mgroup(LSN *lsn,
       goto err_unlock;
     }
 
-    DBUG_PRINT("info", ("chunk: #%u  first_page: %u (%u)  "
+    DBUG_PRINT("info", ("chunk: #%zu  first_page: %u (%u)  "
                         "full_pages: %lu (%lu)  "
                         "Left %lu",
                         groups.elements,
@@ -5902,8 +5902,8 @@ translog_write_variable_record_mgroup(LSN *lsn,
          record_rest + header_fixed_part +
          (groups.elements - groups_per_page * (chunk0_pages - 1)) * (7 + 1))
     chunk0_pages++;
-  DBUG_PRINT("info", ("chunk0_pages: %u  groups %u  groups per full page: %u  "
-                      "Group on last page: %u",
+  DBUG_PRINT("info", ("chunk0_pages: %u  groups %zu  groups per full page: %u  "
+                      "Group on last page: %zu",
                       chunk0_pages, groups.elements,
                       groups_per_page,
                       (groups.elements -
@@ -6414,7 +6414,7 @@ my_bool translog_write_record(LSN *lsn,
   struct st_translog_parts parts;
   LEX_CUSTRING *part;
   int rc;
-  uint short_trid= trn->short_id;
+  SHORT_TRANSACTION_ID short_trid= trn->short_id;
   DBUG_ENTER("translog_write_record");
   DBUG_PRINT("enter", ("type: %u (%s)  ShortTrID: %u  rec_len: %lu",
                        (uint) type, log_record_type_descriptor[type].name,
@@ -6503,7 +6503,7 @@ my_bool translog_write_record(LSN *lsn,
     for (i= TRANSLOG_INTERNAL_PARTS; i < part_no; i++)
     {
 #ifdef HAVE_valgrind
-      /* Find unitialized bytes early */
+      /* Find uninitialized bytes early */
       checksum+= my_checksum(checksum, parts_data[i].str,
                              parts_data[i].length);
 #endif
@@ -6740,7 +6740,7 @@ translog_scanner_get_page(TRANSLOG_SCANNER_DATA *scanner)
   @param fixed_horizon   true if it is OK do not read records which was written
                          after scanning beginning
   @param scanner         scanner which have to be inited
-  @param use_direct      prefer using direct lings from page handler
+  @param use_direct      prefer using direct links from page handler
                          where it is possible.
 
   @note If direct link was used translog_destroy_scanner should be
@@ -6844,7 +6844,7 @@ static my_bool translog_scanner_eol(TRANSLOG_SCANNER_DATA *scanner)
 
 
 /**
-  @brief Cheks End of the Page
+  @brief Checks End of the Page
 
   @param scanner         Information about current chunk during scanning
 
@@ -8457,34 +8457,41 @@ my_bool translog_is_file(uint file_no)
 
 static uint32 translog_first_file(TRANSLOG_ADDRESS horizon, int is_protected)
 {
-  uint min_file= 0, max_file;
+  uint min_file= 1, max_file;
   DBUG_ENTER("translog_first_file");
   if (!is_protected)
     mysql_mutex_lock(&log_descriptor.purger_lock);
-  if (log_descriptor.min_file_number &&
-      translog_is_file(log_descriptor.min_file_number))
+  if (log_descriptor.min_file_number)
   {
-    DBUG_PRINT("info", ("cached %lu",
-                        (ulong) log_descriptor.min_file_number));
-    if (!is_protected)
-      mysql_mutex_unlock(&log_descriptor.purger_lock);
-    DBUG_RETURN(log_descriptor.min_file_number);
+    min_file= log_descriptor.min_file_number;
+    if (translog_is_file(log_descriptor.min_file_number))
+    {
+      DBUG_PRINT("info", ("cached %lu",
+                          (ulong) log_descriptor.min_file_number));
+      if (!is_protected)
+        mysql_mutex_unlock(&log_descriptor.purger_lock);
+      DBUG_RETURN(log_descriptor.min_file_number);
+    }
   }
 
   max_file= LSN_FILE_NO(horizon);
+  if (!translog_is_file(max_file))
+  {
+    if (!is_protected)
+      mysql_mutex_unlock(&log_descriptor.purger_lock);
+    DBUG_RETURN(max_file);                      /* For compatibility */
+  }
 
   /* binary search for last file */
-  while (min_file != max_file && min_file != (max_file - 1))
+  while (min_file < max_file)
   {
     uint test= (min_file + max_file) / 2;
     DBUG_PRINT("info", ("min_file: %u  test: %u  max_file: %u",
                         min_file, test, max_file));
-    if (test == max_file)
-      test--;
     if (translog_is_file(test))
       max_file= test;
     else
-      min_file= test;
+      min_file= test+1;
   }
   log_descriptor.min_file_number= max_file;
   if (!is_protected)
@@ -8724,7 +8731,7 @@ my_bool translog_purge(TRANSLOG_ADDRESS low)
                     log_descriptor.open_files.elements);
         DBUG_ASSERT(log_descriptor.min_file == i);
         file= *((TRANSLOG_FILE **)pop_dynamic(&log_descriptor.open_files));
-        DBUG_PRINT("info", ("Files : %d", log_descriptor.open_files.elements));
+        DBUG_PRINT("info", ("Files : %zu", log_descriptor.open_files.elements));
         DBUG_ASSERT(i == file->number);
         log_descriptor.min_file++;
         DBUG_ASSERT(log_descriptor.max_file - log_descriptor.min_file + 1 ==
@@ -8753,9 +8760,9 @@ my_bool translog_purge(TRANSLOG_ADDRESS low)
 
 /**
   @brief Purges files by stored min need file in case of
-    "ondemend" purge type
+    "one demand" purge type
 
-  @note This function do real work only if it is "ondemend" purge type
+  @note This function do real work only if it is "one demand" purge type
     and translog_purge() was called at least once and last time without
     errors
 
@@ -8794,13 +8801,14 @@ my_bool translog_purge_at_flush()
 
   min_file= translog_first_file(translog_get_horizon(), 1);
   DBUG_ASSERT(min_file != 0); /* log is already started */
-  for(i= min_file; i < log_descriptor.min_need_file && rc == 0; i++)
+  for(i= min_file; i < log_descriptor.min_need_file ; i++)
   {
     char path[FN_REFLEN], *file_name;
     DBUG_PRINT("info", ("purge file %lu\n", (ulong) i));
     file_name= translog_filename_by_fileno(i, path);
-    rc= MY_TEST(mysql_file_delete(key_file_translog,
+    rc|= MY_TEST(mysql_file_delete(key_file_translog,
                                   file_name, MYF(MY_WME)));
+    DBUG_ASSERT(rc == 0);
   }
 
   mysql_mutex_unlock(&log_descriptor.purger_lock);

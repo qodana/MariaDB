@@ -1,3 +1,4 @@
+ALTER DATABASE test CHARACTER SET latin1 COLLATE latin1_swedish_ci;
 drop table if exists t1,t2,t3,t4,t11;
 drop table if exists t1_1,t1_2,t9_1,t9_2,t1aa,t2aa;
 drop view if exists v1;
@@ -2140,7 +2141,7 @@ DO benchmark(100,1+1),1,1;
 do default;
 ERROR 42000: You have an error in your SQL syntax; check the manual that corresponds to your MariaDB server version for the right syntax to use near '' at line 1
 do foobar;
-ERROR 42S22: Unknown column 'foobar' in 'field list'
+ERROR 42S22: Unknown column 'foobar' in 'DO'
 CREATE TABLE t1 (
 id mediumint(8) unsigned NOT NULL auto_increment,
 pseudo varchar(35) NOT NULL default '',
@@ -3132,13 +3133,13 @@ INSERT INTO t1 VALUES (1),(2),(3);
 INSERT INTO t2 VALUES (2);
 INSERT INTO t3 VALUES (3);
 SELECT t1.id,t3.id FROM t1 JOIN t2 ON (t2.id=t1.id) LEFT JOIN t3 USING (id);
-ERROR 23000: Column 'id' in from clause is ambiguous
+ERROR 23000: Column 'id' in FROM is ambiguous
 SELECT t1.id,t3.id FROM t1 JOIN t2 ON (t2.notacolumn=t1.id) LEFT JOIN t3 USING (id);
-ERROR 23000: Column 'id' in from clause is ambiguous
+ERROR 23000: Column 'id' in FROM is ambiguous
 SELECT id,t3.id FROM t1 JOIN t2 ON (t2.id=t1.id) LEFT JOIN t3 USING (id);
-ERROR 23000: Column 'id' in from clause is ambiguous
+ERROR 23000: Column 'id' in FROM is ambiguous
 SELECT id,t3.id FROM (t1 JOIN t2 ON (t2.id=t1.id)) LEFT JOIN t3 USING (id);
-ERROR 23000: Column 'id' in from clause is ambiguous
+ERROR 23000: Column 'id' in FROM is ambiguous
 drop table t1, t2, t3;
 create table t1 (a int(10),b int(10));
 create table t2 (a int(10),b int(10));
@@ -3163,7 +3164,7 @@ select * from t1 join t2 join t3 on (t2.b = t3.b and t1.a = t3.a);
 a	c	b	b	a
 1	1	1	1	1
 select * from t1, t2 join t3 on (t2.b = t3.b and t1.a = t3.a);
-ERROR 42S22: Unknown column 't1.a' in 'on clause'
+ERROR 42S22: Unknown column 't1.a' in 'ON'
 select * from t1 join t2 join t3 join t4 on (t1.a = t4.c and t2.b = t4.c);
 a	c	b	b	a	c
 1	1	1	1	1	1
@@ -4184,106 +4185,103 @@ ALTER VIEW v1 AS SELECT 1 AS ` `;
 ERROR 42000: Incorrect column name ' '
 DROP VIEW v1;
 select str_to_date('2007-10-09','%Y-%m-%d') between '2007/10/01 00:00:00 GMT'
-                                                and '2007/10/20 00:00:00 GMT';
-str_to_date('2007-10-09','%Y-%m-%d') between '2007/10/01 00:00:00 GMT'
-                                                and '2007/10/20 00:00:00 GMT'
+                                                and '2007/10/20 00:00:00 GMT' as exp;
+exp
 1
 Warnings:
 Warning	1292	Truncated incorrect datetime value: '2007/10/01 00:00:00 GMT'
 Warning	1292	Truncated incorrect datetime value: '2007/10/20 00:00:00 GMT'
-select str_to_date('2007-10-09','%Y-%m-%d') > '2007/10/01 00:00:00 GMT-6';
-str_to_date('2007-10-09','%Y-%m-%d') > '2007/10/01 00:00:00 GMT-6'
+select str_to_date('2007-10-09','%Y-%m-%d') > '2007/10/01 00:00:00 GMT-6' as exp;
+exp
 1
 Warnings:
 Warning	1292	Truncated incorrect datetime value: '2007/10/01 00:00:00 GMT-6'
-select str_to_date('2007-10-09','%Y-%m-%d') <= '2007/10/20 00:00:00 GMT-6';
-str_to_date('2007-10-09','%Y-%m-%d') <= '2007/10/20 00:00:00 GMT-6'
+select str_to_date('2007-10-09','%Y-%m-%d') <= '2007/10/20 00:00:00 GMT-6' as exp;
+exp
 1
 Warnings:
 Warning	1292	Truncated incorrect datetime value: '2007/10/20 00:00:00 GMT-6'
-select str_to_date('2007-10-09','%Y-%m-%d') <= '2007/10/2000:00:00 GMT-6';
-str_to_date('2007-10-09','%Y-%m-%d') <= '2007/10/2000:00:00 GMT-6'
+select str_to_date('2007-10-09','%Y-%m-%d') <= '2007/10/2000:00:00 GMT-6' as exp;
+exp
 0
 Warnings:
 Warning	1292	Truncated incorrect datetime value: '2007/10/2000:00:00 GMT-6'
-select str_to_date('2007-10-01','%Y-%m-%d') = '2007-10-1 00:00:00 GMT-6';
-str_to_date('2007-10-01','%Y-%m-%d') = '2007-10-1 00:00:00 GMT-6'
+select str_to_date('2007-10-01','%Y-%m-%d') = '2007-10-1 00:00:00 GMT-6' as exp;
+exp
 1
 Warnings:
 Warning	1292	Truncated incorrect datetime value: '2007-10-1 00:00:00 GMT-6'
-select str_to_date('2007-10-01','%Y-%m-%d') = '2007-10-01 x00:00:00 GMT-6';
-str_to_date('2007-10-01','%Y-%m-%d') = '2007-10-01 x00:00:00 GMT-6'
+select str_to_date('2007-10-01','%Y-%m-%d') = '2007-10-01 x00:00:00 GMT-6' as exp;
+exp
 1
 Warnings:
 Warning	1292	Truncated incorrect date value: '2007-10-01 x00:00:00 GMT-6'
-select str_to_date('2007-10-01','%Y-%m-%d %H:%i:%s') = '2007-10-01 00:00:00 GMT-6';
-str_to_date('2007-10-01','%Y-%m-%d %H:%i:%s') = '2007-10-01 00:00:00 GMT-6'
+select str_to_date('2007-10-01','%Y-%m-%d %H:%i:%s') = '2007-10-01 00:00:00 GMT-6' as exp;
+exp
 1
 Warnings:
 Warning	1292	Truncated incorrect datetime value: '2007-10-01 00:00:00 GMT-6'
-select str_to_date('2007-10-01','%Y-%m-%d %H:%i:%s') = '2007-10-01 00:x00:00 GMT-6';
-str_to_date('2007-10-01','%Y-%m-%d %H:%i:%s') = '2007-10-01 00:x00:00 GMT-6'
+select str_to_date('2007-10-01','%Y-%m-%d %H:%i:%s') = '2007-10-01 00:x00:00 GMT-6' as exp;
+exp
 1
 Warnings:
 Warning	1292	Truncated incorrect datetime value: '2007-10-01 00:x00:00 GMT-6'
-select str_to_date('2007-10-01','%Y-%m-%d %H:%i:%s') = '2007-10-01 x12:34:56 GMT-6';
-str_to_date('2007-10-01','%Y-%m-%d %H:%i:%s') = '2007-10-01 x12:34:56 GMT-6'
+select str_to_date('2007-10-01','%Y-%m-%d %H:%i:%s') = '2007-10-01 x12:34:56 GMT-6' as exp;
+exp
 1
 Warnings:
 Warning	1292	Truncated incorrect date value: '2007-10-01 x12:34:56 GMT-6'
-select str_to_date('2007-10-01 12:34:00','%Y-%m-%d %H:%i:%s') = '2007-10-01 12:34x:56 GMT-6';
-str_to_date('2007-10-01 12:34:00','%Y-%m-%d %H:%i:%s') = '2007-10-01 12:34x:56 GMT-6'
+select str_to_date('2007-10-01 12:34:00','%Y-%m-%d %H:%i:%s') = '2007-10-01 12:34x:56 GMT-6' as exp;
+exp
 1
 Warnings:
 Warning	1292	Truncated incorrect datetime value: '2007-10-01 12:34x:56 GMT-6'
-select str_to_date('2007-10-01 12:34:56','%Y-%m-%d %H:%i:%s') = '2007-10-01 12:34x:56 GMT-6';
-str_to_date('2007-10-01 12:34:56','%Y-%m-%d %H:%i:%s') = '2007-10-01 12:34x:56 GMT-6'
+select str_to_date('2007-10-01 12:34:56','%Y-%m-%d %H:%i:%s') = '2007-10-01 12:34x:56 GMT-6' as exp;
+exp
 0
 Warnings:
 Warning	1292	Truncated incorrect datetime value: '2007-10-01 12:34x:56 GMT-6'
-select str_to_date('2007-10-01 12:34:56','%Y-%m-%d %H:%i:%s') = '2007-10-01 12:34:56';
-str_to_date('2007-10-01 12:34:56','%Y-%m-%d %H:%i:%s') = '2007-10-01 12:34:56'
+select str_to_date('2007-10-01 12:34:56','%Y-%m-%d %H:%i:%s') = '2007-10-01 12:34:56' as exp;
+exp
 1
-select str_to_date('2007-10-01','%Y-%m-%d') = '2007-10-01 12:00:00';
-str_to_date('2007-10-01','%Y-%m-%d') = '2007-10-01 12:00:00'
+select str_to_date('2007-10-01','%Y-%m-%d') = '2007-10-01 12:00:00' as exp;
+exp
 0
-select str_to_date('2007-10-01 12','%Y-%m-%d %H') = '2007-10-01 12:00:00';
-str_to_date('2007-10-01 12','%Y-%m-%d %H') = '2007-10-01 12:00:00'
+select str_to_date('2007-10-01 12','%Y-%m-%d %H') = '2007-10-01 12:00:00' as exp;
+exp
 1
-select str_to_date('2007-10-01 12:34','%Y-%m-%d %H') = '2007-10-01 12:00:00';
-str_to_date('2007-10-01 12:34','%Y-%m-%d %H') = '2007-10-01 12:00:00'
+select str_to_date('2007-10-01 12:34','%Y-%m-%d %H') = '2007-10-01 12:00:00' as exp;
+exp
 1
 Warnings:
 Warning	1292	Truncated incorrect datetime value: '2007-10-01 12:34'
-select str_to_date('2007-02-30 12:34','%Y-%m-%d %H:%i') = '2007-02-30 12:34';
-str_to_date('2007-02-30 12:34','%Y-%m-%d %H:%i') = '2007-02-30 12:34'
+select str_to_date('2007-02-30 12:34','%Y-%m-%d %H:%i') = '2007-02-30 12:34' as exp;
+exp
 1
-select str_to_date('2007-10-00 12:34','%Y-%m-%d %H:%i') = '2007-10-00 12:34';
-str_to_date('2007-10-00 12:34','%Y-%m-%d %H:%i') = '2007-10-00 12:34'
+select str_to_date('2007-10-00 12:34','%Y-%m-%d %H:%i') = '2007-10-00 12:34' as exp;
+exp
 1
 select str_to_date('2007-10-00','%Y-%m-%d') between '2007/09/01 00:00:00'
-                                                and '2007/10/20 00:00:00';
-str_to_date('2007-10-00','%Y-%m-%d') between '2007/09/01 00:00:00'
-                                                and '2007/10/20 00:00:00'
+                                                and '2007/10/20 00:00:00' as exp;
+exp
 1
 set SQL_MODE=TRADITIONAL;
-select str_to_date('2007-10-00 12:34','%Y-%m-%d %H:%i') = '2007-10-00 12:34';
-str_to_date('2007-10-00 12:34','%Y-%m-%d %H:%i') = '2007-10-00 12:34'
+select str_to_date('2007-10-00 12:34','%Y-%m-%d %H:%i') = '2007-10-00 12:34' as exp;
+exp
 NULL
 Warnings:
 Warning	1411	Incorrect datetime value: '2007-10-00 12:34' for function str_to_date
-select str_to_date('2007-10-01 12:34','%Y-%m-%d %H:%i') = '2007-10-00 12:34';
-str_to_date('2007-10-01 12:34','%Y-%m-%d %H:%i') = '2007-10-00 12:34'
+select str_to_date('2007-10-01 12:34','%Y-%m-%d %H:%i') = '2007-10-00 12:34' as exp;
+exp
 0
-select str_to_date('2007-10-00 12:34','%Y-%m-%d %H:%i') = '2007-10-01 12:34';
-str_to_date('2007-10-00 12:34','%Y-%m-%d %H:%i') = '2007-10-01 12:34'
+select str_to_date('2007-10-00 12:34','%Y-%m-%d %H:%i') = '2007-10-01 12:34' as exp;
+exp
 NULL
 Warnings:
 Warning	1411	Incorrect datetime value: '2007-10-00 12:34' for function str_to_date
 select str_to_date('2007-10-00','%Y-%m-%d') between '2007/09/01'
-                                                and '2007/10/20';
-str_to_date('2007-10-00','%Y-%m-%d') between '2007/09/01'
-                                                and '2007/10/20'
+                                                and '2007/10/20' as exp;
+exp
 NULL
 Warnings:
 Warning	1411	Incorrect datetime value: '2007-10-00' for function str_to_date
@@ -4322,23 +4320,23 @@ str_to_date('','%Y-%m-%d') = ''
 1
 Warnings:
 Warning	1292	Truncated incorrect datetime value: ''
-select str_to_date('2000-01-01','%Y-%m-%d') between '1000-01-01' and '2001-01-01';
-str_to_date('2000-01-01','%Y-%m-%d') between '1000-01-01' and '2001-01-01'
+select str_to_date('2000-01-01','%Y-%m-%d') between '1000-01-01' and '2001-01-01' as exp;
+exp
 1
-select str_to_date('2000-01-01','%Y-%m-%d') between '1000-01-01' and NULL;
-str_to_date('2000-01-01','%Y-%m-%d') between '1000-01-01' and NULL
+select str_to_date('2000-01-01','%Y-%m-%d') between '1000-01-01' and NULL as exp;
+exp
 NULL
-select str_to_date('2000-01-01','%Y-%m-%d') between NULL and '2001-01-01';
-str_to_date('2000-01-01','%Y-%m-%d') between NULL and '2001-01-01'
+select str_to_date('2000-01-01','%Y-%m-%d') between NULL and '2001-01-01' as exp;
+exp
 NULL
-select str_to_date('2000-01-01','%Y-%m-%d') between '2001-01-01' and NULL;
-str_to_date('2000-01-01','%Y-%m-%d') between '2001-01-01' and NULL
+select str_to_date('2000-01-01','%Y-%m-%d') between '2001-01-01' and NULL as exp;
+exp
 0
-select str_to_date('2000-01-01','%Y-%m-%d') between NULL and '1000-01-01';
-str_to_date('2000-01-01','%Y-%m-%d') between NULL and '1000-01-01'
+select str_to_date('2000-01-01','%Y-%m-%d') between NULL and '1000-01-01' as exp;
+exp
 0
-select str_to_date('2000-01-01','%Y-%m-%d') between NULL and NULL;
-str_to_date('2000-01-01','%Y-%m-%d') between NULL and NULL
+select str_to_date('2000-01-01','%Y-%m-%d') between NULL and NULL as exp;
+exp
 NULL
 CREATE TABLE t1 (c11 INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY);
 CREATE TABLE t2 (c21 INT UNSIGNED NOT NULL, 
@@ -5312,11 +5310,11 @@ SELECT `varchar_nokey` G1  FROM CC  WHERE `int_nokey` AND `int_key`  <= 4
 HAVING G1  ORDER  BY `varchar_key` LIMIT  6   ;
 G1
 Warnings:
-Warning	1292	Truncated incorrect DECIMAL value: 'z'
-Warning	1292	Truncated incorrect DECIMAL value: 'a'
-Warning	1292	Truncated incorrect DECIMAL value: 'q'
-Warning	1292	Truncated incorrect DECIMAL value: 'm'
-Warning	1292	Truncated incorrect DECIMAL value: 'j'
+Warning	1292	Truncated incorrect BOOLEAN value: 'z'
+Warning	1292	Truncated incorrect BOOLEAN value: 'a'
+Warning	1292	Truncated incorrect BOOLEAN value: 'q'
+Warning	1292	Truncated incorrect BOOLEAN value: 'm'
+Warning	1292	Truncated incorrect BOOLEAN value: 'j'
 DROP TABLE CC;
 # End of test#45227
 #                    
@@ -5650,7 +5648,7 @@ drop table t1;
 CREATE TABLE t1 (a INT, b INT);
 INSERT INTO t1 VALUES (1,10),(2,20);
 SELECT b, GROUP_CONCAT(b ORDER BY 2), MIN(a) AS f FROM t1 GROUP BY b ORDER BY f;
-ERROR 42S22: Unknown column '2' in 'order clause'
+ERROR 42S22: Unknown column '2' in 'ORDER BY'
 DROP TABLE t1;
 #
 # Bug MDEV-24560 SIGSEGV in st_join_table::cleanup + server and client
@@ -5677,7 +5675,7 @@ CREATE TABLE t1(a VARCHAR(16383) CHARACTER SET UTF32, KEY k(a));
 Warnings:
 Note	1071	Specified key was too long; max key length is 1000 bytes
 INSERT INTO t1 VALUES ('abc'), ('def'), ('FFF'), ('abc'), ('FFF');
-SET SESSION big_tables=ON;
+set tmp_memory_table_size=0;
 SELECT DISTINCT COUNT(DISTINCT a) FROM t1;
 COUNT(DISTINCT a)
 3
@@ -5688,6 +5686,7 @@ COUNT(DISTINCT a)
 EXECUTE stmt;
 COUNT(DISTINCT a)
 3
+set tmp_memory_table_size=default;
 DROP TABLE t1;
 #
 # MDEV-29294: Assertion `functype() == ((Item_cond *) new_item)->functype()'
@@ -5746,3 +5745,4 @@ a
 DROP TABLE t1;
 DROP VIEW v1, v2;
 End of 10.0 tests
+ALTER DATABASE test CHARACTER SET utf8mb4 COLLATE utf8mb4_uca1400_ai_ci;

@@ -1314,8 +1314,8 @@ static my_bool reset_stmt_handle(MYSQL_STMT *stmt, uint flags);
 /* A macro to check truncation errors */
 
 #define IS_TRUNCATED(value, is_unsigned, min, max, umax) \
-        ((is_unsigned) ? (((value) > (umax) || (value) < 0) ? 1 : 0) : \
-                         (((value) > (max)  || (value) < (min)) ? 1 : 0))
+  ((is_unsigned) ? (( (value) > (umax)) ? 1 : 0) : \
+                    (((value) > (max)  || (value) < (min)) ? 1 : 0))
 
 #define BIND_RESULT_DONE 1
 /*
@@ -2208,7 +2208,7 @@ int cli_stmt_execute(MYSQL_STMT *stmt)
 	DBUG_RETURN(1);
     }
     length= (ulong) (net->write_pos - net->buff);
-    /* TODO: Look into avoding the following memdup */
+    /* TODO: Look into avoiding the following memdup */
     if (!(param_data= my_memdup(PSI_NOT_INSTRUMENTED, net->buff, length, MYF(0))))
     {
       set_stmt_error(stmt, CR_OUT_OF_MEMORY, unknown_sqlstate, NULL);
@@ -3212,7 +3212,8 @@ static void fetch_string_with_conversion(MYSQL_BIND *param, char *value, size_t 
   {
     longlong data= my_strtoll10(value, &endptr, &err);
     *param->error= (IS_TRUNCATED(data, param->is_unsigned,
-                                 INT_MIN32, INT_MAX32, UINT_MAX32) || err > 0);
+                                 (longlong) INT_MIN32, (longlong) INT_MAX32,
+                                 (longlong) UINT_MAX32) || err > 0);
     longstore(buffer, (int32) data);
     break;
   }
@@ -3329,7 +3330,8 @@ static void fetch_long_with_conversion(MYSQL_BIND *param, MYSQL_FIELD *field,
     break;
   case MYSQL_TYPE_LONG:
     *param->error= IS_TRUNCATED(value, param->is_unsigned,
-                                INT_MIN32, INT_MAX32, UINT_MAX32);
+                                (longlong) INT_MIN32, (longlong) INT_MAX32,
+                                (longlong) UINT_MAX32);
     longstore(buffer, (int32) value);
     break;
   case MYSQL_TYPE_LONGLONG:
@@ -3656,9 +3658,7 @@ static void fetch_result_with_conversion(MYSQL_BIND *param, MYSQL_FIELD *field,
   }
   case MYSQL_TYPE_FLOAT:
   {
-    float value;
-    float4get(value,*row);
-    fetch_float_with_conversion(param, field, value, MY_GCVT_ARG_FLOAT);
+    fetch_float_with_conversion(param, field, get_float(*row), MY_GCVT_ARG_FLOAT);
     *row+= 4;
     break;
   }

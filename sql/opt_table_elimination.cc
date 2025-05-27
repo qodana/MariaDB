@@ -24,10 +24,6 @@
   @{
 */
 
-#ifdef USE_PRAGMA_IMPLEMENTATION
-#pragma implementation				// gcc: Class implementation
-#endif
-
 #include "mariadb.h"
 #include "my_bit.h"
 #include "sql_select.h"
@@ -148,7 +144,7 @@
 
   The algorithm starts with equality nodes that don't have any incoming edges
   (their expressions are either constant or depend only on tables that are
-  outside of the outer join in question) and performns a breadth-first
+  outside of the outer join in question) and performs a breadth-first
   traversal. If we reach the outer join nest node, it means outer join is
   functionally dependent and can be eliminated. Otherwise it cannot be
   eliminated.
@@ -257,9 +253,9 @@ public:
   Field *field; /* Field this object is representing */
   
   /* Iteration over unbound modules that are our dependencies */
-  Iterator init_unbound_modules_iter(char *buf);
+  Iterator init_unbound_modules_iter(char *buf) override;
   Dep_module* get_next_unbound_module(Dep_analysis_context *dac, 
-                                      Iterator iter);
+                                      Iterator iter) override;
   
   void make_unbound_modules_iter_skip_keys(Iterator iter);
   
@@ -326,9 +322,9 @@ public:
   Dep_module_pseudo_key *pseudo_key;
 
   /* Iteration over unbound modules that are our dependencies */
-  Iterator init_unbound_modules_iter(char *buf);
+  Iterator init_unbound_modules_iter(char *buf) override;
   Dep_module* get_next_unbound_module(Dep_analysis_context *dac, 
-                                      Iterator iter);
+                                      Iterator iter) override;
   static const size_t iterator_size;
 private:
   class Module_iter
@@ -336,7 +332,7 @@ private:
   public:
     /* Space for field iterator */
     char buf[Dep_value_field::iterator_size];
-    /* !NULL <=> iterating over depdenent modules of this field */
+    /* !NULL <=> iterating over dependent modules of this field */
     Dep_value_field *field_dep; 
     bool returned_goal;
   };
@@ -387,7 +383,7 @@ protected:
   uint unbound_args;
   
   Dep_module() : unbound_args(0) {}
-  /* to bump unbound_args when constructing depedendencies */
+  /* to bump unbound_args when constructing dependencies */
   friend class Field_dependency_recorder; 
   friend class Dep_analysis_context;
 };
@@ -410,8 +406,8 @@ public:
   /* Used during condition analysis only, similar to KEYUSE::level */
   uint level;
 
-  Iterator init_unbound_values_iter(char *buf);
-  Dep_value* get_next_unbound_value(Dep_analysis_context *dac, Iterator iter);
+  Iterator init_unbound_values_iter(char *buf) override;
+  Dep_value* get_next_unbound_value(Dep_analysis_context *dac, Iterator iter) override;
   static const size_t iterator_size;
 private:
   class Value_iter
@@ -445,8 +441,8 @@ public:
   /* Unique keys form a linked list, ordered by keyno */
   Dep_module_key *next_table_key;
   
-  Iterator init_unbound_values_iter(char *buf);
-  Dep_value* get_next_unbound_value(Dep_analysis_context *dac, Iterator iter);
+  Iterator init_unbound_values_iter(char *buf) override;
+  Dep_value* get_next_unbound_value(Dep_analysis_context *dac, Iterator iter) override;
   static const size_t iterator_size;
 private:
   class Value_iter
@@ -529,18 +525,18 @@ public:
   {
     unbound_args= n_children;
   }
-  bool is_final() { return TRUE; }
+  bool is_final() override { return TRUE; }
   /* 
     This is the goal module, so the running wave algorithm should terminate
     once it sees that this module is applicable and should never try to apply
     it, hence no use for unbound value iterator implementation.
   */
-  Iterator init_unbound_values_iter(char *buf)
+  Iterator init_unbound_values_iter(char *buf) override
   { 
     DBUG_ASSERT(0); 
     return NULL;
   }
-  Dep_value* get_next_unbound_value(Dep_analysis_context *dac, Iterator iter)
+  Dep_value* get_next_unbound_value(Dep_analysis_context *dac, Iterator iter) override
   {
     DBUG_ASSERT(0); 
     return NULL;
@@ -881,7 +877,7 @@ eliminate_tables_for_list(JOIN *join, List<TABLE_LIST> *join_list,
 
   SYNOPSIS
     check_func_dependency()
-      join         Join we're procesing
+      join         Join we're processing
       dep_tables   Tables that we check to be functionally dependent (on
                    everything else)
       it           Iterator that enumerates these tables, or NULL if we're 
@@ -1057,7 +1053,7 @@ public:
   Field_dependency_recorder(Dep_analysis_context *ctx_arg): ctx(ctx_arg)
   {}
   
-  void visit_field(Item_field *item)
+  void visit_field(Item_field *item) override
   {
     Field *field= item->field;
     Dep_value_table *tbl_dep;
@@ -1338,8 +1334,8 @@ void build_eq_mods_for_cond(THD *thd, Dep_analysis_context *ctx,
       multiple-equality. Do two things:
        - Collect List<Dep_value_field> of tblX.colY where tblX is one of the
          tables we're trying to eliminate.
-       - rembember if there was a bound value, either const_expr or tblY.colZ
-         swher tblY is not a table that we're trying to eliminate.
+       - remember if there was a bound value, either const_expr or tblY.colZ
+         where tblY is not a table that we're trying to eliminate.
       Store all collected information in a Dep_module_expr object.
     */
     Item_equal *item_equal= (Item_equal*)cond;
@@ -1404,7 +1400,7 @@ void build_eq_mods_for_cond(THD *thd, Dep_analysis_context *ctx,
   
     $LEFT_PART OR $RIGHT_PART
   
-  condition. This is achieved as follows: First, we apply distrubutive law:
+  condition. This is achieved as follows: First, we apply distributive law:
   
     (fdep_A_1 AND fdep_A_2 AND ...)  OR  (fdep_B_1 AND fdep_B_2 AND ...) =
 
@@ -1593,7 +1589,8 @@ void check_equality(Dep_analysis_context *ctx, Dep_module_expr **eq_mod,
       left->real_item()->type() == Item::FIELD_ITEM)
   {
     Field *field= ((Item_field*)left->real_item())->field;
-    if (!field->can_optimize_outer_join_table_elimination(cond, right))
+    if (field->can_optimize_outer_join_table_elimination(cond, right) !=
+        Data_type_compatibility::OK)
       return;
     Dep_value_field *field_val;
     if ((field_val= ctx->get_field_value(field)))
@@ -1732,7 +1729,7 @@ void Dep_analysis_context::create_unique_pseudo_key_if_needed(
     auto max_possible_elements= first_select->join->fields_list.elements;
     void *buf;
     MY_BITMAP *exposed_fields= (MY_BITMAP*)
-        current_thd->alloc(sizeof(MY_BITMAP));
+        current_thd->alloc<MY_BITMAP>(1);
     if (!(buf= current_thd->alloc(bitmap_buffer_size(max_possible_elements))) ||
         my_bitmap_init(exposed_fields, (my_bitmap_map*)buf,
                        max_possible_elements))
@@ -1849,7 +1846,7 @@ Dep_value_field *Dep_analysis_context::get_field_value(Field *field)
 /* 
   Iteration over unbound modules that are our dependencies.
   for those we have:
-    - dependendencies of our fields
+    - dependencies of our fields
     - outer join we're in 
 */
 char *Dep_value_table::init_unbound_modules_iter(char *buf)
