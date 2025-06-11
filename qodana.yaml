@@ -1,4 +1,6 @@
-bootstrap: apt-get update; apt-get install -y zlib1g-dev flex bison gnutls-bin gnutls-dev pkg-config libcurl4-openssl-dev libzstd-dev libboost-all-dev libsnappy-dev libbz2-dev liblz4-dev liblzma-dev liblzo2-dev
+bootstrap: |
+  apt-get update
+  apt-get install -y zlib1g-dev flex bison gnutls-bin gnutls-dev pkg-config libcurl4-openssl-dev libzstd-dev libboost-all-dev libsnappy-dev libbz2-dev liblz4-dev liblzma-dev liblzo2-dev libxml2-dev libncurses5-dev
 exclude:
   - name: CppDFAMemoryLeak
   - name: CppDFAArrayIndexOutOfBounds
